@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+from ruamel.yaml import YAML
+
+from rbac_compiler.emitter import emit
 from rbac_compiler.compiler import (
     UsedGroup,
     collect_used_groups,
@@ -581,3 +584,72 @@ class TestContractGuarantees:
         for ad in plan.admin_users:
             for g in ad.groups:
                 assert g in required, f"admin_users[{ad.name}] names '{g}'"
+
+
+class TestContractShapeGuarantees:
+    """The v0.5 shape claims, which had no tests until this audit.
+
+    `compiled-rbac-plan` v0.5 states: "Six keys, all always present (a list with
+    no members emits as empty, never omitted)" and that `agent_private_dirs[].path`
+    is relative. A consumer parsing the plan depends on both — a missing key is a
+    KeyError at apply time, and an absolute path would be prepended to a root and
+    resolve nowhere.
+
+    Found by auditing the contract claim-by-claim against the suite rather than
+    ad hoc. Worth recording how the first pass went wrong: a grep for
+    "always present|== \\[\\]" reported TESTED because it matched
+    `assert c.admins == []` in an unrelated model test. The audit's own check
+    passed for the wrong reason — pattern matching standing in for semantic
+    verification — inside an audit prompted by the document about that class.
+    """
+
+    @staticmethod
+    def _empty_plan():
+        """A registry with no agents and an org with no data entries: every list
+        in the plan is empty, which is exactly when an omitted key would hide.
+        """
+        constants = _make_constants()
+        org = _make_org("arc")
+        org.data = []
+        return compile_plan(
+            constants, [(org, Path("arc.yml"))],
+            AgentRegistry(meta=Meta(version="0.4"), agents=[]), {}, {},
+        )[0]
+
+    def test_all_six_top_level_keys_emitted_when_every_list_is_empty(self, tmp_path):
+        plan = self._empty_plan()
+        out = tmp_path / "p.yml"
+        emit(plan, out)
+        data = YAML(typ="safe").load(out.read_text(encoding="utf-8"))
+
+        for key in ("meta", "required_groups", "agent_users", "admin_users",
+                    "directory_classifications", "agent_private_dirs"):
+            assert key in data, (
+                f"'{key}' is absent from the emitted plan. v0.5 promises all six "
+                f"keys are always present — an omitted key is a KeyError in the "
+                f"consumer, not an empty loop"
+            )
+        for key in ("required_groups", "agent_users", "admin_users",
+                    "directory_classifications", "agent_private_dirs"):
+            assert data[key] == [], f"'{key}' should emit as [] when empty"
+
+    def test_emitted_paths_are_relative_not_absolute(self):
+        """v0.5: `path` is relative, the root prefix stripped. An absolute path
+        would be prepended to the root by the consumer and resolve nowhere.
+        """
+        constants = _make_constants()
+        agents = AgentRegistry(meta=Meta(version="0.4"), agents=[
+            _agent(name="agent_arc_x",
+                   share_class={"org": "arc", "grade": 3,
+                                "vertical": "tech", "scope": "mz"}),
+        ])
+        plan, _ = compile_plan(
+            constants, [(_make_org("arc"), Path("arc.yml"))], agents, {}, {})
+
+        for dc in plan.directory_classifications:
+            assert not dc.path.startswith("/"), (
+                f"directory_classifications path '{dc.path}' is absolute")
+        assert plan.agent_private_dirs, "fixture should produce a configs entry"
+        for pd in plan.agent_private_dirs:
+            assert not pd.path.startswith("/"), (
+                f"agent_private_dirs path '{pd.path}' is absolute")
