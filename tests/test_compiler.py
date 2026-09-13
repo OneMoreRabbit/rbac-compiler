@@ -512,3 +512,72 @@ class TestCompilePlanStructure:
         )
         assert plan.compiler_version == "0.5.0"
         assert plan.schema_version == "0.4"
+
+
+class TestContractGuarantees:
+    """Tests for the guarantees `compiled-rbac-plan` v0.5 states to consumers.
+
+    Added 2026-09-13 after auditing the contract against the suite. The
+    cross-reference guarantee below was **published to ansible-platform and
+    ingstr with nothing asserting it** — the same shape as the determinism
+    clause: a promise in `provides/` that no test would have caught the breaking
+    of. A contract guarantee is worse to leave untested than a docstring,
+    because a consumer builds against it.
+
+    Instance of `checks-that-pass-for-the-wrong-reason`: the remedy that
+    document prescribes is a test asserting the shipped behaviour, carrying the
+    incident in its docstring. This is that test.
+    """
+
+    def _plan(self):
+        constants = _make_constants()
+        agents = AgentRegistry(meta=Meta(version="0.4"), agents=[
+            _agent(name="agent_arc_x",
+                   share_class={"org": "arc", "grade": 3,
+                                "vertical": "tech", "scope": "mz"}),
+        ])
+        plan, _ = compile_plan(
+            constants, [(_make_org("arc"), Path("arc.yml"))], agents, {}, {})
+        return plan
+
+    def test_every_classification_group_is_in_required_groups(self):
+        """The v0.5 guarantee, verbatim: "Every `directory_classifications[].group`
+        is a member of `required_groups`." It is also the stated *reason*
+        `configs/` is carried in `agent_private_dirs` instead, so a consumer
+        cross-referencing the two lists depends on it.
+        """
+        plan = self._plan()
+        required = set(plan.required_groups)
+        for dc in plan.directory_classifications:
+            assert dc.group in required, (
+                f"classification '{dc.path}' names group '{dc.group}', which is "
+                f"not in required_groups — this breaks the cross-reference "
+                f"guarantee published in compiled-rbac-plan v0.5"
+            )
+
+    def test_agent_private_dirs_carry_no_group_at_all(self):
+        """The other half of the same guarantee: `configs/` is kept out of
+        directory_classifications precisely because it has no RBAC group. If an
+        AgentPrivateDir ever gained one, the separation would be pointless and
+        the cross-reference above would start failing instead.
+        """
+        for pd in self._plan().agent_private_dirs:
+            assert not hasattr(pd, "group"), (
+                "agent_private_dirs must carry no group — that is why they are "
+                "a separate section"
+            )
+
+    def test_every_user_group_is_in_required_groups(self):
+        """Not stated as a guarantee in v0.5, but a consumer creating users from
+        the plan and groups from required_groups would fail on any group named
+        only in agent_users. Asserted so that if it ever stops holding it is a
+        deliberate contract change rather than a surprise at apply time.
+        """
+        plan = self._plan()
+        required = set(plan.required_groups)
+        for au in plan.agent_users:
+            for g in au.groups:
+                assert g in required, f"agent_users[{au.name}] names '{g}'"
+        for ad in plan.admin_users:
+            for g in ad.groups:
+                assert g in required, f"admin_users[{ad.name}] names '{g}'"
