@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import RegistryError, RegistryWarning
+from .resolver import CLASSIFIED_ROOT, CLASSIFIED_SURFACES
 from .models import AgentRegistry, Constants, OrgDataFile
 
 
@@ -236,6 +237,31 @@ def validate_agent_registry(
                 path=path,
                 result=result,
             )
+
+        # ADR-0010 §8 — `shares:` overrides are rejected on the classified
+        # surfaces. This is a hard error, not a warning: the compiler's surface
+        # builders turn a resolver ValueError into a warn-and-skip, which would
+        # drop the classification and emit a plan where a hot surface has no
+        # group and no ACL — a plan true of neither state, the §6 hazard on the
+        # write side. The registry must be corrected first, which is the ADR's
+        # declared rollout order (registry rewritten -> compiler change -> apply).
+        if agent.shares is not None:
+            for surface in CLASSIFIED_SURFACES:
+                override = getattr(agent.shares, surface, None)
+                if override:
+                    result.error(
+                        f"Agent '{agent.name}' declares `shares.{surface}: "
+                        f"{override}` — ADR-0010 §8 rejects overrides on the "
+                        f"classified surfaces ({', '.join(CLASSIFIED_SURFACES)}). "
+                        f"They resolve under '{CLASSIFIED_ROOT}<org>/<name>/"
+                        f"{surface}/' on the agent host, and a per-agent "
+                        f"override makes that root advisory rather than "
+                        f"authoritative. Remove the override; a path pointing "
+                        f"back at beaver would also keep this agent on the slow "
+                        f"path the ADR exists to remove. `shares.configs` is "
+                        f"still permitted.",
+                        file=path,
+                    )
 
         # Validate access grants.
         for grant in agent.access:

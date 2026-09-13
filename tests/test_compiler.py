@@ -298,12 +298,14 @@ class TestAgentSurfaceClassifications:
         plan, _ = compile_plan(self.constants, self.org_files, self.agents, {}, {})
         agent_paths = [
             dc.path for dc in plan.directory_classifications
-            if "agents/agent_arc_research_mz" in dc.path
+            if "agent_arc_research_mz" in dc.path
         ]
+        # ADR-0010 §7: classified surfaces are relative to the HOST root, whose
+        # layout has no `agents/` segment.
         assert set(agent_paths) == {
-            "arc/agents/agent_arc_research_mz/memory/",
-            "arc/agents/agent_arc_research_mz/sessions/",
-            "arc/agents/agent_arc_research_mz/scratch/",
+            "arc/agent_arc_research_mz/memory/",
+            "arc/agent_arc_research_mz/sessions/",
+            "arc/agent_arc_research_mz/scratch/",
         }
 
     def test_configs_surface_not_in_directory_classifications(self):
@@ -411,24 +413,40 @@ class TestAgentSurfaceClassifications:
         ]
         assert len(agent_entries) == 3  # one per classified surface
 
-    def test_shares_override_emits_overridden_path(self):
+    def test_classified_override_is_skipped_with_a_warning(self):
+        """ADR-0010 §8. `validate_all` is where this is refused outright (a hard
+        error); if a caller reaches the compiler anyway, the surface builder
+        turns the resolver's refusal into a warning and emits NO classification
+        for that surface rather than classifying the overridden path.
+        """
         agent = _agent(
             name="agent_arc_finance",
             share_class={"org": "arc", "grade": 5, "vertical": "finance", "scope": "global"},
             shares={"scratch": "/mnt/raid/shared_drives/pa_scratch/"},
         )
         agents = AgentRegistry(meta=Meta(version="0.4"), agents=[agent])
-        plan, _ = compile_plan(self.constants, self.org_files, agents, {}, {})
-        # Filter by description (path no longer ends in "/scratch/" since it
-        # was overridden to /mnt/raid/shared_drives/pa_scratch/).
-        scratch = next(
+        plan, warnings = compile_plan(self.constants, self.org_files, agents, {}, {})
+
+        scratch = [
             dc for dc in plan.directory_classifications
             if (dc.description or "").endswith("agent_arc_finance scratch surface")
-        )
-        assert scratch.path == "shared_drives/pa_scratch/"
+        ]
+        assert scratch == [], "a rejected override must not be classified"
+        assert any("ADR-0010 §8" in w for w in warnings), warnings
+
+        # The other two classified surfaces are unaffected.
+        others = {
+            dc.path for dc in plan.directory_classifications
+            if "agent_arc_finance" in dc.path
+        }
+        assert others == {
+            "arc/agent_arc_finance/memory/",
+            "arc/agent_arc_finance/sessions/",
+        }
 
     def test_top_org_agent_no_special_case(self):
-        """A top-org agent emits classifications under top/agents/<name>/..."""
+        """A top-org agent emits classifications under the host root like any
+        other org — top/<name>/<surface>/, no special case."""
         top_org = _make_org("top", verticals=["any"], scopes=["global"], max_grade=0)
         agent = _agent(
             name="agent_oversight",
@@ -445,9 +463,9 @@ class TestAgentSurfaceClassifications:
             if "agent_oversight" in dc.path
         ]
         assert set(agent_paths) == {
-            "top/agents/agent_oversight/memory/",
-            "top/agents/agent_oversight/sessions/",
-            "top/agents/agent_oversight/scratch/",
+            "top/agent_oversight/memory/",
+            "top/agent_oversight/sessions/",
+            "top/agent_oversight/scratch/",
         }
 
 
@@ -653,3 +671,82 @@ class TestContractShapeGuarantees:
         for pd in plan.agent_private_dirs:
             assert not pd.path.startswith("/"), (
                 f"agent_private_dirs path '{pd.path}' is absolute")
+class TestAdr0010PlanShape:
+    """§7 path_roots and §5 identity_parity_required."""
+
+    def setup_method(self):
+        self.constants = _make_constants()
+        self.org = _make_org("arc")
+        self.agents = AgentRegistry(meta=Meta(version="0.4"), agents=[_agent(
+            name="agent_arc_x",
+            share_class={"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        )])
+        self.org_files = [(self.org, Path("arc.yml"))]
+
+    def _plan(self):
+        plan, _ = compile_plan(self.constants, self.org_files, self.agents, {}, {})
+        return plan
+
+    def test_path_roots_declares_both_roots_and_their_hosts(self):
+        roots = self._plan().path_roots
+        assert roots["classified"]["root"] == "/srv/agents/"
+        assert roots["classified"]["host"] == "agent-host"
+        assert roots["classified"]["applies_to"] == "directory_classifications"
+        assert roots["private"]["root"] == "/mnt/raid/"
+        assert roots["private"]["host"] == "beaver"
+        assert roots["private"]["applies_to"] == "agent_private_dirs"
+
+    def test_every_emitted_path_is_relative_to_its_declared_root(self):
+        """A path that is absolute, or that re-states its root, would be
+        prepended twice by a consumer following path_roots.
+        """
+        plan = self._plan()
+        for dc in plan.directory_classifications:
+            assert not dc.path.startswith("/"), dc.path
+            assert not dc.path.startswith("srv/"), dc.path
+        for pd in plan.agent_private_dirs:
+            assert not pd.path.startswith("/"), pd.path
+            assert not pd.path.startswith("mnt/"), pd.path
+
+    def test_parity_covers_only_host_side_principals(self):
+        """Regression: the set was first built from ALL directory_classifications,
+        which pulled in `root` and the org-data groups. Those paths stay on
+        beaver, so they have no second host to disagree with — declaring them
+        would validate an invariant adjacent to the one that matters.
+        """
+        plan = self._plan()
+        parity = plan.identity_parity_required
+
+        assert parity["users"] == ["agent_arc_x"]
+        assert "root" not in parity["users"], (
+            "root owns only beaver-side org-data paths — it must not be in the "
+            "parity set"
+        )
+
+        surface_groups = {
+            dc.group for dc in plan.directory_classifications
+            if dc.owner != "root"
+        }
+        assert set(parity["groups"]) == surface_groups
+
+        org_data_groups = {
+            dc.group for dc in plan.directory_classifications
+            if dc.owner == "root"
+        }
+        assert not (set(parity["groups"]) & org_data_groups), (
+            "beaver-only org-data groups leaked into the parity set"
+        )
+
+    def test_parity_asserts_numeric_equality_not_mere_resolution(self):
+        """The check this block invites must be numeric equality. "the name
+        resolves on both hosts" is the adjacent invariant: it passes while uid
+        1001 on the host faces uid 1002 on beaver, which is the case that
+        silently breaks the classification.
+        """
+        parity = self._plan().identity_parity_required
+        assertion = parity["assert"].lower()
+        assert "numeric" in assertion
+        assert "equals" in assertion
+        assert "not merely" in assertion
+        assert "fail closed" in parity["on_mismatch"].lower()
+        assert "§5" in parity["reason"]

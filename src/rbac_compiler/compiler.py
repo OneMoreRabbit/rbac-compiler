@@ -24,7 +24,9 @@ from .matching import grade_match, scope_match, vertical_match
 from .models import AccessGrant, Agent, AgentRegistry, Constants, OrgDataFile
 from .resolver import (
     CLASSIFIED_SURFACES,
+    CLASSIFIED_ROOT,
     PRIVATE_DIR_MODE,
+    PRIVATE_ROOT,
     PRIVATE_SURFACES,
     resolve_surface_path_relative,
 )
@@ -204,6 +206,54 @@ class CompiledPlan:
     admin_users: list[AdminUser]
     directory_classifications: list[DirectoryClassification]
     agent_private_dirs: list[AgentPrivateDir]
+    path_roots: dict[str, dict[str, str]]
+    identity_parity_required: dict[str, object]
+
+
+def _identity_parity_required(
+    surface_classifications: list[DirectoryClassification],
+) -> dict[str, object]:
+    """Declare every principal whose NUMERIC id must be identical on the agent
+    host and on beaver (ADR-0010 §5).
+
+    The compiler cannot check this — it has no uid/gid knowledge and never sees
+    either host — so it states the requirement and ansible-platform verifies it.
+
+    The wording of `assert` below is deliberate. The tempting check is "does
+    this name resolve on both hosts", which is an *adjacent* invariant: a name
+    resolving on both sides says nothing about the two numbers agreeing, and it
+    is the numbers that travel on the NFS wire. A check that passes while uid
+    1001 on the host faces uid 1002 on beaver is worse than no check, because
+    the classification then describes a principal the filesystem does not
+    enforce.
+
+    Scope is deliberately narrow: ONLY the agent-surface classifications, which
+    are the paths that moved to the host. The org-data classifications in the
+    same list (`arc/dropbox/...`, `agents/_shared/...`) stay on beaver and are
+    owned by `root`, so they have no second host to disagree with — and
+    `configs/` never leaves beaver either. Declaring those too would be the same
+    error this block exists to avoid: a set that looks thorough while the
+    distinction that matters (which side of the export a principal lives on) is
+    the one it has dropped.
+    """
+    users = sorted({dc.owner for dc in surface_classifications})
+    groups = sorted({dc.group for dc in surface_classifications})
+    return {
+        "reason": (
+            "ADR-0010 §5 — the agent host exports these paths and beaver mounts "
+            "them. NFS carries numeric ids, so a uid/gid that differs between "
+            "the two hosts makes this plan describe a principal the filesystem "
+            "does not enforce."
+        ),
+        "assert": (
+            "for every name below, the NUMERIC uid/gid resolved on the agent "
+            "host EQUALS the numeric uid/gid resolved on beaver — not merely "
+            "that the name resolves on both"
+        ),
+        "on_mismatch": "fail closed; do not apply the plan",
+        "users": users,
+        "groups": groups,
+    }
 
 
 # ── Directory classifications ─────────────────────────────────────────────────
@@ -398,5 +448,20 @@ def compile_plan(
         admin_users=admin_users,
         directory_classifications=dir_classifications,
         agent_private_dirs=private_dirs,
+        path_roots={
+            "classified": {
+                "root": CLASSIFIED_ROOT,
+                "host": "agent-host",
+                "applies_to": "directory_classifications",
+                "note": "local disk on the agent host, which exports it (ADR-0010 §7)",
+            },
+            "private": {
+                "root": PRIVATE_ROOT,
+                "host": "beaver",
+                "applies_to": "agent_private_dirs",
+                "note": "unchanged by ADR-0010; configs/ does not move (§7)",
+            },
+        },
+        identity_parity_required=_identity_parity_required(surface_classifications),
     )
     return plan, warnings

@@ -122,6 +122,20 @@ def resolve_surface_path(agent: Agent, surface: str) -> str | None:
     if agent.shares is not None:
         override = getattr(agent.shares, surface, None)
         if override:
+            if surface not in PRIVATE_SURFACES:
+                raise ValueError(
+                    f"agent '{agent.name}': `shares.{surface}` override "
+                    f"'{override}' is not permitted — ADR-0010 §8 rejects "
+                    f"overrides on the classified surfaces "
+                    f"({', '.join(s for s in ALL_SURFACES if s not in PRIVATE_SURFACES)}). "
+                    f"They live at the declared root '{CLASSIFIED_ROOT}"
+                    f"<org>/<name>/{surface}/' on the agent host; a per-agent "
+                    f"override would make the root advisory rather than "
+                    f"authoritative (§7), and an override back to beaver would "
+                    f"silently keep this agent on the slow path the ADR exists "
+                    f"to remove. Remove the override; "
+                    f"`shares.configs` remains permitted."
+                )
             return _canonicalise(override)
 
     if agent.share_class is None:
