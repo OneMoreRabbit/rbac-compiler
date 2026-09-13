@@ -16,17 +16,41 @@ Surfaces:
   - sessions  (classified)
   - scratch   (classified)
 
-rbac-compile emits relative paths in directory_classifications
-(Ansible prepends data_root at apply time). The absolute form is the
-cross-tool canonical form; the relative form is derived by stripping
-the data_root prefix.
+rbac-compile emits relative paths (Ansible prepends the root at apply time).
+Since ADR-0010 there are TWO roots on two different hosts, so the plan's
+`meta.path_roots` states which root each section is relative to — a bare
+relative path can no longer say by itself.
+
+  classified surfaces  memory/sessions/scratch  ->  /srv/agents/<org>/<name>/<surface>/
+                                                    on the agent host (it exports)
+  private surface       configs                 ->  /mnt/raid/<org>/agents/<name>/configs/
+                                                    on beaver (unchanged)
+
+Note the shapes differ, not just the prefix: the host layout has no `agents/`
+segment. Do not treat this as a prefix swap.
+
+Cross-tool note: the byte-identical guarantee with sync-compile now holds over
+the `<org>/<name>/<surface>` STEM, not the absolute path — sync reads the same
+files through beaver's mount and ingstr through /mnt/agent-hosts/<host>/, so
+three tools legitimately resolve three different roots over one tree.
 """
 
 from __future__ import annotations
 
 from .models import Agent
 
-DATA_ROOT = "/mnt/raid/"
+# Root for the three classified surfaces: the agent host's local disk, which the
+# host exports and beaver mounts (ADR-0010). Layout: <org>/<name>/<surface>/
+CLASSIFIED_ROOT = "/srv/agents/"
+
+# Root for the private surface (configs). Unchanged by ADR-0010 — still beaver,
+# still unclassified. Layout: <org>/agents/<name>/<surface>/
+PRIVATE_ROOT = "/mnt/raid/"
+
+# Retained as the beaver data root under its historical name. Pre-ADR-0010 this
+# was the only root and served all four surfaces; it is now PRIVATE_ROOT's alias
+# and nothing should reach for it to build a classified path.
+DATA_ROOT = PRIVATE_ROOT
 
 # All four surfaces an agent may expose. configs/ is private and not classified,
 # but the resolver still gives a path for it (Ansible uses it for ownership
@@ -60,17 +84,35 @@ def _canonicalise(path: str) -> str:
     return path
 
 
+def root_for(surface: str) -> str:
+    """The root a surface's paths are relative to.
+
+    Classified surfaces live on the agent host; configs stays on beaver
+    (ADR-0010). Callers emitting paths must state the root alongside them —
+    see `meta.path_roots` in the compiled plan.
+    """
+    if surface not in ALL_SURFACES:
+        raise ValueError(
+            f"unknown surface '{surface}' (valid: {', '.join(ALL_SURFACES)})"
+        )
+    return PRIVATE_ROOT if surface in PRIVATE_SURFACES else CLASSIFIED_ROOT
+
+
 def resolve_surface_path(agent: Agent, surface: str) -> str | None:
     """Return the absolute path for an agent's surface.
 
     Resolution rules:
       1. If `agent.shares.<surface>` is set, that override wins (canonicalised).
-      2. Otherwise, if `agent.share_class` is set, return the convention path:
-         /mnt/raid/<share_class.org>/agents/<agent.name>/<surface>/
+      2. Otherwise, if `agent.share_class` is set, return the convention path
+         for that surface's root (ADR-0010 — the two differ in shape, not just
+         in prefix):
+           classified  /srv/agents/<org>/<name>/<surface>/        (agent host)
+           private     /mnt/raid/<org>/agents/<name>/configs/     (beaver)
       3. Otherwise return None — the agent has no path for this surface.
 
-    Mirrors sync-compile's resolve_surface_path(). Cross-tool fixture verifies
-    byte-equivalence.
+    Cross-tool equivalence with sync-compile now holds over the
+    <org>/<name>/<surface> stem rather than the absolute path; see the module
+    docstring.
     """
     if surface not in ALL_SURFACES:
         raise ValueError(
@@ -85,21 +127,36 @@ def resolve_surface_path(agent: Agent, surface: str) -> str | None:
     if agent.share_class is None:
         return None
 
-    return f"{DATA_ROOT}{agent.share_class.org}/agents/{agent.name}/{surface}/"
+    org = agent.share_class.org
+    if surface in PRIVATE_SURFACES:
+        return f"{PRIVATE_ROOT}{org}/agents/{agent.name}/{surface}/"
+    return f"{CLASSIFIED_ROOT}{org}/{agent.name}/{surface}/"
 
 
 def resolve_surface_path_relative(agent: Agent, surface: str) -> str | None:
-    """Return the path relative to DATA_ROOT (the form emitted in
-    directory_classifications). Raises ValueError if an override path is
-    not under DATA_ROOT — rbac-compile cannot classify arbitrary paths.
+    """Return the path relative to its surface's root — the form emitted in
+    directory_classifications and agent_private_dirs.
+
+    Raises ValueError if the path is not under the root for that surface. A
+    `shares:` override on a classified surface must sit under CLASSIFIED_ROOT,
+    and one on configs under PRIVATE_ROOT: since ADR-0010 those are different
+    machines, so an override on the wrong side is not a classifiable path —
+    it would be applied on a host where the file does not exist.
     """
     abs_path = resolve_surface_path(agent, surface)
     if abs_path is None:
         return None
-    if not abs_path.startswith(DATA_ROOT):
+    root = root_for(surface)
+    if not abs_path.startswith(root):
+        other = PRIVATE_ROOT if root == CLASSIFIED_ROOT else CLASSIFIED_ROOT
+        hint = (
+            f" — it is under '{other}', which since ADR-0010 is a different "
+            f"host; a {surface} path must be under '{root}'"
+            if abs_path.startswith(other) else
+            " — rbac-compile cannot classify paths outside the declared roots"
+        )
         raise ValueError(
             f"agent '{agent.name}' surface '{surface}': path '{abs_path}' "
-            f"is not under DATA_ROOT '{DATA_ROOT}' — rbac-compile cannot "
-            f"classify paths outside the fileserver data root"
+            f"is not under the '{surface}' root '{root}'{hint}"
         )
-    return abs_path[len(DATA_ROOT):]
+    return abs_path[len(root):]
