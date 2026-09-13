@@ -1,14 +1,17 @@
 """
 Agent surface path resolution.
 
-Both rbac-compile and sync-compile must produce byte-identical paths for the
-same (agent, surface) pair — sync-compile uses the path as bisync's --local
-target; rbac-compile uses it as a directory_classification. Divergence means
+rbac-compile and sync-compile must agree on WHICH FILES an agent's surfaces are,
+for the same (agent, surface) pair — sync-compile uses the path as bisync's
+--local target, rbac-compile as a directory_classification, and divergence means
 sync writes to one place while RBAC classifies another. Silent breakage.
 
-The reference implementation lives in `sync_compiler.registry.resolve_surface_path()`.
-This module replicates the contract. A cross-tool fixture
-(tests/fixtures/cross_tool/agent_paths.yml) pins both implementations together.
+Since ADR-0010 §7 that agreement holds over the `<org>/<name>/<surface>` STEM,
+**not** the absolute path: the two tools deliberately resolve different roots
+over one tree (rbac the host root, sync the beaver mount), so byte-identical
+absolute paths are now false by design. Neither tool is the reference
+implementation for the absolute form; the stem is the shared contract, and the
+cross-tool fixture (tests/fixtures/cross_tool/agent_paths.yml) asserts it.
 
 Surfaces:
   - configs   (agent-private, mode 0700; classified=No)
@@ -29,10 +32,8 @@ relative path can no longer say by itself.
 Note the shapes differ, not just the prefix: the host layout has no `agents/`
 segment. Do not treat this as a prefix swap.
 
-Cross-tool note: the byte-identical guarantee with sync-compile now holds over
-the `<org>/<name>/<surface>` STEM, not the absolute path — sync reads the same
-files through beaver's mount and ingstr through /mnt/agent-hosts/<host>/, so
-three tools legitimately resolve three different roots over one tree.
+Roots and shapes are stated below; ingstr reads the same files through a third
+root (/mnt/agent-hosts/<host>/), so three tools resolve three roots over one tree.
 """
 
 from __future__ import annotations
