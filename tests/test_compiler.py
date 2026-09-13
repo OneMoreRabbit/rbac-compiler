@@ -510,5 +510,5 @@ class TestCompilePlanStructure:
             constants, [(org, Path("arc.yml"))],
             AgentRegistry(meta=Meta(version="0.4"), agents=[]), {}, {},
         )
-        assert plan.compiler_version == "0.4.1"
+        assert plan.compiler_version == "0.5.0"
         assert plan.schema_version == "0.4"
