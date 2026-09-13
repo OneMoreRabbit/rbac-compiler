@@ -29,7 +29,7 @@ from .resolver import (
     resolve_surface_path_relative,
 )
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 
 # ── Group name construction ───────────────────────────────────────────────────
