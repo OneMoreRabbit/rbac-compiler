@@ -1,6 +1,6 @@
 [project]
 name = "rbac-compiler"
-version = "0.5.0"
+version = "0.6.0"
 description = "Compile RBAC registry YAML files into an Ansible-applicable plan"
 requires-python = ">=3.10"
 dependencies = [
