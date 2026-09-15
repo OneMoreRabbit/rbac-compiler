@@ -1,26 +1,38 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Cross-tool path fixture — rbac-compile ↔ sync-compile
+# Cross-tool path fixture — rbac-compile ↔ sync-compile (↔ ingstr)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Both compilers must produce byte-identical paths for the same agent + surface
-# input. sync-compile uses the path as bisync's --local target; rbac-compile
-# uses it as a directory_classification. Divergence → silent breakage.
+# ADR-0010 §7 re-scoped this contract. It used to assert byte-identical ABSOLUTE
+# paths between the two compilers. That is now false by design: three tools
+# legitimately resolve three different roots over one tree —
 #
-# rbac-compile emits RELATIVE paths (Ansible prepends data_root at apply time);
-# sync-compile emits ABSOLUTE paths. The fixture stores both forms so each
-# tool can verify against its own column.
+#   rbac-compile  the host root        (it classifies where the data lives)
+#   sync-compile  the beaver mount     (it syncs what beaver can see)
+#   ingstr        the beaver mount     (it ingests what beaver can see)
 #
-# To push this fixture to sync-compile, copy this file to
-# `sync_compiler/tests/fixtures/cross_tool/agent_paths.yml` and add a
-# corresponding test that asserts sync-compile's `resolve_surface_path()`
-# produces the `absolute` column for every case. The two test suites
-# remain in lockstep.
+# What is shared is the STEM: <org>/<name>/<surface>/. Each tool prepends its own
+# declared root. So the cross-tool assertion is on `stem`, and `rbac_absolute` /
+# `rbac_relative` are rbac-compile's own columns.
 #
-# Surfaces tested: configs, memory, sessions, scratch.
-# Schema version of `agent:` blocks matches agent_registry.yml v0.4 schema.
+# A guarantee narrowed deliberately is a contract; one weakened to make a test
+# green is a contract lost with no record. This is the narrowing, recorded.
+#
+# To adopt on the sync-compile side: copy this file and assert that your
+# resolve_surface_path() yields `stem` with your own root stripped, for every
+# case where `stem` is non-null. Run it in CI on every push.
+#
+# Surfaces: memory/sessions/scratch are classified and live on the agent host.
+# configs is private, stays on beaver, and is NOT a shared surface — `stem` is
+# null for it, because sync-compile and ingstr never touch it.
+# Agent blocks match the agent_registry.yml v0.4 schema.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-data_root: "/mnt/raid/"
+roots:
+  classified:   "/srv/agents/"          # agent host, local disk — it exports
+  private:      "/mnt/raid/"            # beaver — configs/ only, unchanged
+  beaver_mount: "/mnt/agent-hosts/"     # beaver's mount of the host export;
+                                        # sync-compile and ingstr read side.
+                                        # Shape: <host>/<org>/<name>/<surface>/
 
 cases:
 
@@ -28,158 +40,217 @@ cases:
     description: Standard org-bounded agent, no shares override.
     agent:
       name: agent_arc_research_mz
-      share_class:
-        org: arc
-        grade: 3
-        vertical: tech
-        scope: mz
+      share_class: {org: arc, grade: 3, vertical: tech, scope: mz}
     expected:
-      configs:
-        absolute: /mnt/raid/arc/agents/agent_arc_research_mz/configs/
-        relative: arc/agents/agent_arc_research_mz/configs/
       memory:
-        absolute: /mnt/raid/arc/agents/agent_arc_research_mz/memory/
-        relative: arc/agents/agent_arc_research_mz/memory/
+        stem: arc/agent_arc_research_mz/memory/
+        rbac_absolute: /srv/agents/arc/agent_arc_research_mz/memory/
+        rbac_relative: arc/agent_arc_research_mz/memory/
       sessions:
-        absolute: /mnt/raid/arc/agents/agent_arc_research_mz/sessions/
-        relative: arc/agents/agent_arc_research_mz/sessions/
+        stem: arc/agent_arc_research_mz/sessions/
+        rbac_absolute: /srv/agents/arc/agent_arc_research_mz/sessions/
+        rbac_relative: arc/agent_arc_research_mz/sessions/
       scratch:
-        absolute: /mnt/raid/arc/agents/agent_arc_research_mz/scratch/
-        relative: arc/agents/agent_arc_research_mz/scratch/
+        stem: arc/agent_arc_research_mz/scratch/
+        rbac_absolute: /srv/agents/arc/agent_arc_research_mz/scratch/
+        rbac_relative: arc/agent_arc_research_mz/scratch/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/arc/agents/agent_arc_research_mz/configs/
+        rbac_relative: arc/agents/agent_arc_research_mz/configs/
 
   - name: convention_top_cross_org
-    description: Cross-org/admin agent — home in the platform-wide `top` org.
+    description: >
+      Cross-org/admin agent — home in the platform-wide `top` org. `top` is a
+      regular org: no special-casing of the path, the root or the group name.
     agent:
       name: agent_oversight
-      share_class:
-        org: top
-        grade: 0
-        vertical: any
-        scope: global
+      share_class: {org: top, grade: 0, vertical: any, scope: global}
     expected:
-      configs:
-        absolute: /mnt/raid/top/agents/agent_oversight/configs/
-        relative: top/agents/agent_oversight/configs/
       memory:
-        absolute: /mnt/raid/top/agents/agent_oversight/memory/
-        relative: top/agents/agent_oversight/memory/
+        stem: top/agent_oversight/memory/
+        rbac_absolute: /srv/agents/top/agent_oversight/memory/
+        rbac_relative: top/agent_oversight/memory/
       sessions:
-        absolute: /mnt/raid/top/agents/agent_oversight/sessions/
-        relative: top/agents/agent_oversight/sessions/
+        stem: top/agent_oversight/sessions/
+        rbac_absolute: /srv/agents/top/agent_oversight/sessions/
+        rbac_relative: top/agent_oversight/sessions/
       scratch:
-        absolute: /mnt/raid/top/agents/agent_oversight/scratch/
-        relative: top/agents/agent_oversight/scratch/
+        stem: top/agent_oversight/scratch/
+        rbac_absolute: /srv/agents/top/agent_oversight/scratch/
+        rbac_relative: top/agent_oversight/scratch/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/top/agents/agent_oversight/configs/
+        rbac_relative: top/agents/agent_oversight/configs/
 
   - name: convention_cpf_with_sub_agents
     description: Sub-agents don't affect surface paths (one bisync per surface).
     agent:
       name: agent_cpf_advisory
-      share_class:
-        org: cpf
-        grade: 2
-        vertical: advisory
-        scope: global
-      sub_agents:
-        - literature_review
-        - fact_check
+      share_class: {org: cpf, grade: 2, vertical: advisory, scope: global}
+      sub_agents: [literature_review, fact_check]
     expected:
-      configs:
-        absolute: /mnt/raid/cpf/agents/agent_cpf_advisory/configs/
-        relative: cpf/agents/agent_cpf_advisory/configs/
       memory:
-        absolute: /mnt/raid/cpf/agents/agent_cpf_advisory/memory/
-        relative: cpf/agents/agent_cpf_advisory/memory/
+        stem: cpf/agent_cpf_advisory/memory/
+        rbac_absolute: /srv/agents/cpf/agent_cpf_advisory/memory/
+        rbac_relative: cpf/agent_cpf_advisory/memory/
       sessions:
-        absolute: /mnt/raid/cpf/agents/agent_cpf_advisory/sessions/
-        relative: cpf/agents/agent_cpf_advisory/sessions/
+        stem: cpf/agent_cpf_advisory/sessions/
+        rbac_absolute: /srv/agents/cpf/agent_cpf_advisory/sessions/
+        rbac_relative: cpf/agent_cpf_advisory/sessions/
       scratch:
-        absolute: /mnt/raid/cpf/agents/agent_cpf_advisory/scratch/
-        relative: cpf/agents/agent_cpf_advisory/scratch/
+        stem: cpf/agent_cpf_advisory/scratch/
+        rbac_absolute: /srv/agents/cpf/agent_cpf_advisory/scratch/
+        rbac_relative: cpf/agent_cpf_advisory/scratch/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/cpf/agents/agent_cpf_advisory/configs/
+        rbac_relative: cpf/agents/agent_cpf_advisory/configs/
 
-  - name: shares_full_override
-    description: All four surfaces overridden.
+  # ── ADR-0010 §8: overrides on classified surfaces are rejected ──────────────
+  # These three cases were the v0.4-era override cases. §8 rejects a `shares:`
+  # override on memory/sessions/scratch outright, so they are now rejection
+  # cases rather than path cases. Kept — with their original agent blocks — so
+  # the fixture pins the rejection rather than losing the coverage.
+
+  - name: shares_override_classified_all_three_rejected
+    description: >
+      Was `shares_full_override`. §8 rejects the three classified overrides;
+      the configs override remains permitted and still resolves.
     agent:
       name: agent_arc_finance
-      share_class:
-        org: arc
-        grade: 5
-        vertical: finance
-        scope: global
+      share_class: {org: arc, grade: 5, vertical: finance, scope: global}
       shares:
         configs:  /mnt/raid/arc/agents/agent_arc_finance/configs/
         memory:   /mnt/raid/arc/agents/agent_arc_finance/memory/
         sessions: /mnt/raid/arc/agents/agent_arc_finance/sessions/
         scratch:  /mnt/raid/arc/agents/agent_arc_finance/scratch/
     expected:
+      memory:   {rejected: "ADR-0010 §8"}
+      sessions: {rejected: "ADR-0010 §8"}
+      scratch:  {rejected: "ADR-0010 §8"}
       configs:
-        absolute: /mnt/raid/arc/agents/agent_arc_finance/configs/
-        relative: arc/agents/agent_arc_finance/configs/
-      memory:
-        absolute: /mnt/raid/arc/agents/agent_arc_finance/memory/
-        relative: arc/agents/agent_arc_finance/memory/
-      sessions:
-        absolute: /mnt/raid/arc/agents/agent_arc_finance/sessions/
-        relative: arc/agents/agent_arc_finance/sessions/
-      scratch:
-        absolute: /mnt/raid/arc/agents/agent_arc_finance/scratch/
-        relative: arc/agents/agent_arc_finance/scratch/
+        stem: null
+        rbac_absolute: /mnt/raid/arc/agents/agent_arc_finance/configs/
+        rbac_relative: arc/agents/agent_arc_finance/configs/
 
-  - name: shares_partial_override_scratch_only
-    description: Only scratch overridden; the other three follow convention.
+  - name: shares_override_classified_to_shared_location_rejected
+    description: >
+      Was `shares_partial_override_scratch_only`. The override pointed at a
+      SHARED location (`shared_drives/`), not a per-agent surface — the case
+      that forced §8. A shared area has no home in the per-agent host layout,
+      and multi-writer data on one host's local disk re-imports the problem
+      §4 settled by keeping `agents/shared/` beaver-native. The other three
+      surfaces follow convention unaffected.
     agent:
       name: agent_arc_pa
-      share_class:
-        org: arc
-        grade: 2
-        vertical: any
-        scope: global
+      share_class: {org: arc, grade: 2, vertical: any, scope: global}
       shares:
         scratch: /mnt/raid/shared_drives/pa_scratch/
     expected:
-      configs:
-        absolute: /mnt/raid/arc/agents/agent_arc_pa/configs/
-        relative: arc/agents/agent_arc_pa/configs/
+      scratch:  {rejected: "ADR-0010 §8"}
       memory:
-        absolute: /mnt/raid/arc/agents/agent_arc_pa/memory/
-        relative: arc/agents/agent_arc_pa/memory/
+        stem: arc/agent_arc_pa/memory/
+        rbac_absolute: /srv/agents/arc/agent_arc_pa/memory/
+        rbac_relative: arc/agent_arc_pa/memory/
       sessions:
-        absolute: /mnt/raid/arc/agents/agent_arc_pa/sessions/
-        relative: arc/agents/agent_arc_pa/sessions/
-      scratch:
-        absolute: /mnt/raid/shared_drives/pa_scratch/
-        relative: shared_drives/pa_scratch/
+        stem: arc/agent_arc_pa/sessions/
+        rbac_absolute: /srv/agents/arc/agent_arc_pa/sessions/
+        rbac_relative: arc/agent_arc_pa/sessions/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/arc/agents/agent_arc_pa/configs/
+        rbac_relative: arc/agents/agent_arc_pa/configs/
 
-  - name: trailing_slash_canonicalisation
-    description: Override path without trailing slash gets one added.
+  - name: shares_override_classified_no_trailing_slash_rejected
+    description: >
+      Was `trailing_slash_canonicalisation`. §8 rejects before canonicalisation
+      is reached, so a missing trailing slash no longer changes the outcome.
+      Canonicalisation of a permitted override is covered by
+      `shares_configs_override_canonicalised` below.
     agent:
       name: agent_arc_canon
-      share_class:
-        org: arc
-        grade: 3
-        vertical: tech
-        scope: global
+      share_class: {org: arc, grade: 3, vertical: tech, scope: global}
       shares:
         scratch: /mnt/raid/arc/agents/agent_arc_canon/scratch
     expected:
-      configs:
-        absolute: /mnt/raid/arc/agents/agent_arc_canon/configs/
-        relative: arc/agents/agent_arc_canon/configs/
+      scratch:  {rejected: "ADR-0010 §8"}
       memory:
-        absolute: /mnt/raid/arc/agents/agent_arc_canon/memory/
-        relative: arc/agents/agent_arc_canon/memory/
+        stem: arc/agent_arc_canon/memory/
+        rbac_absolute: /srv/agents/arc/agent_arc_canon/memory/
+        rbac_relative: arc/agent_arc_canon/memory/
       sessions:
-        absolute: /mnt/raid/arc/agents/agent_arc_canon/sessions/
-        relative: arc/agents/agent_arc_canon/sessions/
+        stem: arc/agent_arc_canon/sessions/
+        rbac_absolute: /srv/agents/arc/agent_arc_canon/sessions/
+        rbac_relative: arc/agent_arc_canon/sessions/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/arc/agents/agent_arc_canon/configs/
+        rbac_relative: arc/agents/agent_arc_canon/configs/
+
+  - name: shares_configs_override_canonicalised
+    description: >
+      configs is the one surface that may still be overridden (§8), so
+      canonicalisation coverage moves here: no trailing slash in, one out.
+    agent:
+      name: agent_arc_cfgcanon
+      share_class: {org: arc, grade: 3, vertical: tech, scope: global}
+      shares:
+        configs: /mnt/raid/arc/agents/agent_arc_cfgcanon/custom_configs
+    expected:
+      memory:
+        stem: arc/agent_arc_cfgcanon/memory/
+        rbac_absolute: /srv/agents/arc/agent_arc_cfgcanon/memory/
+        rbac_relative: arc/agent_arc_cfgcanon/memory/
+      sessions:
+        stem: arc/agent_arc_cfgcanon/sessions/
+        rbac_absolute: /srv/agents/arc/agent_arc_cfgcanon/sessions/
+        rbac_relative: arc/agent_arc_cfgcanon/sessions/
       scratch:
-        absolute: /mnt/raid/arc/agents/agent_arc_canon/scratch/
-        relative: arc/agents/agent_arc_canon/scratch/
+        stem: arc/agent_arc_cfgcanon/scratch/
+        rbac_absolute: /srv/agents/arc/agent_arc_cfgcanon/scratch/
+        rbac_relative: arc/agent_arc_cfgcanon/scratch/
+      configs:
+        stem: null
+        rbac_absolute: /mnt/raid/arc/agents/agent_arc_cfgcanon/custom_configs/
+        rbac_relative: arc/agents/agent_arc_cfgcanon/custom_configs/
+
+  - name: configs_override_off_beaver_rejected
+    description: >
+      A permitted (configs) override must still sit under its own root. One
+      pointing at the host root is not classifiable on beaver, where configs is
+      applied — the wrong-side check, still live for the surface that kept its
+      override.
+    agent:
+      name: agent_arc_wrongside
+      share_class: {org: arc, grade: 3, vertical: tech, scope: global}
+      shares:
+        configs: /srv/agents/arc/agent_arc_wrongside/configs/
+    expected:
+      memory:
+        stem: arc/agent_arc_wrongside/memory/
+        rbac_absolute: /srv/agents/arc/agent_arc_wrongside/memory/
+        rbac_relative: arc/agent_arc_wrongside/memory/
+      sessions:
+        stem: arc/agent_arc_wrongside/sessions/
+        rbac_absolute: /srv/agents/arc/agent_arc_wrongside/sessions/
+        rbac_relative: arc/agent_arc_wrongside/sessions/
+      scratch:
+        stem: arc/agent_arc_wrongside/scratch/
+        rbac_absolute: /srv/agents/arc/agent_arc_wrongside/scratch/
+        rbac_relative: arc/agent_arc_wrongside/scratch/
+      configs:
+        stem: null
+        rbac_absolute: /srv/agents/arc/agent_arc_wrongside/configs/
+        rbac_relative_raises: true
 
   - name: no_share_class
     description: Agent with no share_class — all surfaces resolve to null.
     agent:
       name: agent_orphan
     expected:
-      configs: null
-      memory:  null
+      memory:   null
       sessions: null
       scratch:  null
+      configs:  null

@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+from ruamel.yaml import YAML
+
+from rbac_compiler.emitter import emit
 from rbac_compiler.compiler import (
     UsedGroup,
     collect_used_groups,
@@ -295,12 +298,14 @@ class TestAgentSurfaceClassifications:
         plan, _ = compile_plan(self.constants, self.org_files, self.agents, {}, {})
         agent_paths = [
             dc.path for dc in plan.directory_classifications
-            if "agents/agent_arc_research_mz" in dc.path
+            if "agent_arc_research_mz" in dc.path
         ]
+        # ADR-0010 §7: classified surfaces are relative to the HOST root, whose
+        # layout has no `agents/` segment.
         assert set(agent_paths) == {
-            "arc/agents/agent_arc_research_mz/memory/",
-            "arc/agents/agent_arc_research_mz/sessions/",
-            "arc/agents/agent_arc_research_mz/scratch/",
+            "arc/agent_arc_research_mz/memory/",
+            "arc/agent_arc_research_mz/sessions/",
+            "arc/agent_arc_research_mz/scratch/",
         }
 
     def test_configs_surface_not_in_directory_classifications(self):
@@ -408,24 +413,40 @@ class TestAgentSurfaceClassifications:
         ]
         assert len(agent_entries) == 3  # one per classified surface
 
-    def test_shares_override_emits_overridden_path(self):
+    def test_classified_override_is_skipped_with_a_warning(self):
+        """ADR-0010 §8. `validate_all` is where this is refused outright (a hard
+        error); if a caller reaches the compiler anyway, the surface builder
+        turns the resolver's refusal into a warning and emits NO classification
+        for that surface rather than classifying the overridden path.
+        """
         agent = _agent(
             name="agent_arc_finance",
             share_class={"org": "arc", "grade": 5, "vertical": "finance", "scope": "global"},
             shares={"scratch": "/mnt/raid/shared_drives/pa_scratch/"},
         )
         agents = AgentRegistry(meta=Meta(version="0.4"), agents=[agent])
-        plan, _ = compile_plan(self.constants, self.org_files, agents, {}, {})
-        # Filter by description (path no longer ends in "/scratch/" since it
-        # was overridden to /mnt/raid/shared_drives/pa_scratch/).
-        scratch = next(
+        plan, warnings = compile_plan(self.constants, self.org_files, agents, {}, {})
+
+        scratch = [
             dc for dc in plan.directory_classifications
             if (dc.description or "").endswith("agent_arc_finance scratch surface")
-        )
-        assert scratch.path == "shared_drives/pa_scratch/"
+        ]
+        assert scratch == [], "a rejected override must not be classified"
+        assert any("ADR-0010 §8" in w for w in warnings), warnings
+
+        # The other two classified surfaces are unaffected.
+        others = {
+            dc.path for dc in plan.directory_classifications
+            if "agent_arc_finance" in dc.path
+        }
+        assert others == {
+            "arc/agent_arc_finance/memory/",
+            "arc/agent_arc_finance/sessions/",
+        }
 
     def test_top_org_agent_no_special_case(self):
-        """A top-org agent emits classifications under top/agents/<name>/..."""
+        """A top-org agent emits classifications under the host root like any
+        other org — top/<name>/<surface>/, no special case."""
         top_org = _make_org("top", verticals=["any"], scopes=["global"], max_grade=0)
         agent = _agent(
             name="agent_oversight",
@@ -442,9 +463,9 @@ class TestAgentSurfaceClassifications:
             if "agent_oversight" in dc.path
         ]
         assert set(agent_paths) == {
-            "top/agents/agent_oversight/memory/",
-            "top/agents/agent_oversight/sessions/",
-            "top/agents/agent_oversight/scratch/",
+            "top/agent_oversight/memory/",
+            "top/agent_oversight/sessions/",
+            "top/agent_oversight/scratch/",
         }
 
 
@@ -510,5 +531,222 @@ class TestCompilePlanStructure:
             constants, [(org, Path("arc.yml"))],
             AgentRegistry(meta=Meta(version="0.4"), agents=[]), {}, {},
         )
-        assert plan.compiler_version == "0.5.0"
+        assert plan.compiler_version == "0.6.0"
         assert plan.schema_version == "0.4"
+
+
+class TestContractGuarantees:
+    """Tests for the guarantees `compiled-rbac-plan` v0.5 states to consumers.
+
+    Added 2026-09-13 after auditing the contract against the suite. The
+    cross-reference guarantee below was **published to ansible-platform and
+    ingstr with nothing asserting it** — the same shape as the determinism
+    clause: a promise in `provides/` that no test would have caught the breaking
+    of. A contract guarantee is worse to leave untested than a docstring,
+    because a consumer builds against it.
+
+    Instance of `checks-that-pass-for-the-wrong-reason`: the remedy that
+    document prescribes is a test asserting the shipped behaviour, carrying the
+    incident in its docstring. This is that test.
+    """
+
+    def _plan(self):
+        constants = _make_constants()
+        agents = AgentRegistry(meta=Meta(version="0.4"), agents=[
+            _agent(name="agent_arc_x",
+                   share_class={"org": "arc", "grade": 3,
+                                "vertical": "tech", "scope": "mz"}),
+        ])
+        plan, _ = compile_plan(
+            constants, [(_make_org("arc"), Path("arc.yml"))], agents, {}, {})
+        return plan
+
+    def test_every_classification_group_is_in_required_groups(self):
+        """The v0.5 guarantee, verbatim: "Every `directory_classifications[].group`
+        is a member of `required_groups`." It is also the stated *reason*
+        `configs/` is carried in `agent_private_dirs` instead, so a consumer
+        cross-referencing the two lists depends on it.
+        """
+        plan = self._plan()
+        required = set(plan.required_groups)
+        for dc in plan.directory_classifications:
+            assert dc.group in required, (
+                f"classification '{dc.path}' names group '{dc.group}', which is "
+                f"not in required_groups — this breaks the cross-reference "
+                f"guarantee published in compiled-rbac-plan v0.5"
+            )
+
+    def test_agent_private_dirs_carry_no_group_at_all(self):
+        """The other half of the same guarantee: `configs/` is kept out of
+        directory_classifications precisely because it has no RBAC group. If an
+        AgentPrivateDir ever gained one, the separation would be pointless and
+        the cross-reference above would start failing instead.
+        """
+        for pd in self._plan().agent_private_dirs:
+            assert not hasattr(pd, "group"), (
+                "agent_private_dirs must carry no group — that is why they are "
+                "a separate section"
+            )
+
+    def test_every_user_group_is_in_required_groups(self):
+        """Not stated as a guarantee in v0.5, but a consumer creating users from
+        the plan and groups from required_groups would fail on any group named
+        only in agent_users. Asserted so that if it ever stops holding it is a
+        deliberate contract change rather than a surprise at apply time.
+        """
+        plan = self._plan()
+        required = set(plan.required_groups)
+        for au in plan.agent_users:
+            for g in au.groups:
+                assert g in required, f"agent_users[{au.name}] names '{g}'"
+        for ad in plan.admin_users:
+            for g in ad.groups:
+                assert g in required, f"admin_users[{ad.name}] names '{g}'"
+
+
+class TestContractShapeGuarantees:
+    """The v0.5 shape claims, which had no tests until this audit.
+
+    `compiled-rbac-plan` v0.5 states: "Six keys, all always present (a list with
+    no members emits as empty, never omitted)" and that `agent_private_dirs[].path`
+    is relative. A consumer parsing the plan depends on both — a missing key is a
+    KeyError at apply time, and an absolute path would be prepended to a root and
+    resolve nowhere.
+
+    Found by auditing the contract claim-by-claim against the suite rather than
+    ad hoc. Worth recording how the first pass went wrong: a grep for
+    "always present|== \\[\\]" reported TESTED because it matched
+    `assert c.admins == []` in an unrelated model test. The audit's own check
+    passed for the wrong reason — pattern matching standing in for semantic
+    verification — inside an audit prompted by the document about that class.
+    """
+
+    @staticmethod
+    def _empty_plan():
+        """A registry with no agents and an org with no data entries: every list
+        in the plan is empty, which is exactly when an omitted key would hide.
+        """
+        constants = _make_constants()
+        org = _make_org("arc")
+        org.data = []
+        return compile_plan(
+            constants, [(org, Path("arc.yml"))],
+            AgentRegistry(meta=Meta(version="0.4"), agents=[]), {}, {},
+        )[0]
+
+    def test_all_six_top_level_keys_emitted_when_every_list_is_empty(self, tmp_path):
+        plan = self._empty_plan()
+        out = tmp_path / "p.yml"
+        emit(plan, out)
+        data = YAML(typ="safe").load(out.read_text(encoding="utf-8"))
+
+        for key in ("meta", "required_groups", "agent_users", "admin_users",
+                    "directory_classifications", "agent_private_dirs"):
+            assert key in data, (
+                f"'{key}' is absent from the emitted plan. v0.5 promises all six "
+                f"keys are always present — an omitted key is a KeyError in the "
+                f"consumer, not an empty loop"
+            )
+        for key in ("required_groups", "agent_users", "admin_users",
+                    "directory_classifications", "agent_private_dirs"):
+            assert data[key] == [], f"'{key}' should emit as [] when empty"
+
+    def test_emitted_paths_are_relative_not_absolute(self):
+        """v0.5: `path` is relative, the root prefix stripped. An absolute path
+        would be prepended to the root by the consumer and resolve nowhere.
+        """
+        constants = _make_constants()
+        agents = AgentRegistry(meta=Meta(version="0.4"), agents=[
+            _agent(name="agent_arc_x",
+                   share_class={"org": "arc", "grade": 3,
+                                "vertical": "tech", "scope": "mz"}),
+        ])
+        plan, _ = compile_plan(
+            constants, [(_make_org("arc"), Path("arc.yml"))], agents, {}, {})
+
+        for dc in plan.directory_classifications:
+            assert not dc.path.startswith("/"), (
+                f"directory_classifications path '{dc.path}' is absolute")
+        assert plan.agent_private_dirs, "fixture should produce a configs entry"
+        for pd in plan.agent_private_dirs:
+            assert not pd.path.startswith("/"), (
+                f"agent_private_dirs path '{pd.path}' is absolute")
+class TestAdr0010PlanShape:
+    """§7 path_roots and §5 identity_parity_required."""
+
+    def setup_method(self):
+        self.constants = _make_constants()
+        self.org = _make_org("arc")
+        self.agents = AgentRegistry(meta=Meta(version="0.4"), agents=[_agent(
+            name="agent_arc_x",
+            share_class={"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        )])
+        self.org_files = [(self.org, Path("arc.yml"))]
+
+    def _plan(self):
+        plan, _ = compile_plan(self.constants, self.org_files, self.agents, {}, {})
+        return plan
+
+    def test_path_roots_declares_both_roots_and_their_hosts(self):
+        roots = self._plan().path_roots
+        assert roots["classified"]["root"] == "/srv/agents/"
+        assert roots["classified"]["host"] == "agent-host"
+        assert roots["classified"]["applies_to"] == "directory_classifications"
+        assert roots["private"]["root"] == "/mnt/raid/"
+        assert roots["private"]["host"] == "beaver"
+        assert roots["private"]["applies_to"] == "agent_private_dirs"
+
+    def test_every_emitted_path_is_relative_to_its_declared_root(self):
+        """A path that is absolute, or that re-states its root, would be
+        prepended twice by a consumer following path_roots.
+        """
+        plan = self._plan()
+        for dc in plan.directory_classifications:
+            assert not dc.path.startswith("/"), dc.path
+            assert not dc.path.startswith("srv/"), dc.path
+        for pd in plan.agent_private_dirs:
+            assert not pd.path.startswith("/"), pd.path
+            assert not pd.path.startswith("mnt/"), pd.path
+
+    def test_parity_covers_only_host_side_principals(self):
+        """Regression: the set was first built from ALL directory_classifications,
+        which pulled in `root` and the org-data groups. Those paths stay on
+        beaver, so they have no second host to disagree with — declaring them
+        would validate an invariant adjacent to the one that matters.
+        """
+        plan = self._plan()
+        parity = plan.identity_parity_required
+
+        assert parity["users"] == ["agent_arc_x"]
+        assert "root" not in parity["users"], (
+            "root owns only beaver-side org-data paths — it must not be in the "
+            "parity set"
+        )
+
+        surface_groups = {
+            dc.group for dc in plan.directory_classifications
+            if dc.owner != "root"
+        }
+        assert set(parity["groups"]) == surface_groups
+
+        org_data_groups = {
+            dc.group for dc in plan.directory_classifications
+            if dc.owner == "root"
+        }
+        assert not (set(parity["groups"]) & org_data_groups), (
+            "beaver-only org-data groups leaked into the parity set"
+        )
+
+    def test_parity_asserts_numeric_equality_not_mere_resolution(self):
+        """The check this block invites must be numeric equality. "the name
+        resolves on both hosts" is the adjacent invariant: it passes while uid
+        1001 on the host faces uid 1002 on beaver, which is the case that
+        silently breaks the classification.
+        """
+        parity = self._plan().identity_parity_required
+        assertion = parity["assert"].lower()
+        assert "numeric" in assertion
+        assert "equals" in assertion
+        assert "not merely" in assertion
+        assert "fail closed" in parity["on_mismatch"].lower()
+        assert "§5" in parity["reason"]
