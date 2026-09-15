@@ -48,13 +48,16 @@ agents:
 
   # ── Agent with a shares override (custom paths) ──
   - name: agent_arc_finance
-    description: "ARC finance, custom paths"
+    description: "ARC finance, custom configs path"
     share_class:
       org: arc
       grade: 5
       vertical: finance
       scope: global
+    # ADR-0010 §8: the memory/sessions/scratch overrides this agent used to
+    # carry were removed — they are rejected outright now, and they pointed at
+    # /mnt/raid, which after the move names the wrong machine. configs is the
+    # one surface that may still be overridden, so it is kept here to exercise
+    # the permitted path.
     shares:
-      memory:   /mnt/raid/arc/agents/agent_arc_finance/memory/
-      sessions: /mnt/raid/arc/agents/agent_arc_finance/sessions/
-      scratch:  /mnt/raid/arc/agents/agent_arc_finance/scratch/
+      configs:  /mnt/raid/arc/agents/agent_arc_finance/custom_configs/

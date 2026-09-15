@@ -23,6 +23,7 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
             "schema_version": plan.schema_version,
             "source_files": plan.source_files,
             "source_hashes": plan.source_hashes,
+            "path_roots": plan.path_roots,
         },
         "required_groups": plan.required_groups,
         "agent_users": [
@@ -60,6 +61,7 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
             }
             for pd in plan.agent_private_dirs
         ],
+        "identity_parity_required": plan.identity_parity_required,
     }
 
 
