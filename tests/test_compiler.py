@@ -531,7 +531,7 @@ class TestCompilePlanStructure:
             constants, [(org, Path("arc.yml"))],
             AgentRegistry(meta=Meta(version="0.4"), agents=[]), {}, {},
         )
-        assert plan.compiler_version == "0.6.0"
+        assert plan.compiler_version == "0.7.0"
         assert plan.schema_version == "0.4"
 
 
@@ -750,3 +750,81 @@ class TestAdr0010PlanShape:
         assert "not merely" in assertion
         assert "fail closed" in parity["on_mismatch"].lower()
         assert "§5" in parity["reason"]
+
+
+class TestPathConvention:
+    """0.7: every emitted path is a directory path with one trailing slash.
+
+    Before 0.7 the convention was provenance-dependent and undocumented: agent
+    surfaces went through the canonicaliser and carried a trailing slash, while
+    org-data entries were copied verbatim from `orgs/<org>.yml` and did not.
+    Both land in `directory_classifications[]`.
+
+    ansible-platform hit it from one side — an anchor on `memory$` matched
+    nothing and the failure surfaced far from its cause. The other direction
+    (`Confidential/$`) would have failed for the opposite reason and had not yet
+    found anyone. Ruled: normalise, because documenting two shapes makes every
+    consumer carry the split forever.
+
+    Note what the suite did NOT do: when the fix landed, all 179 tests still
+    passed. Nothing asserted the org-data shape either way, so the convention
+    could have flipped in either direction unnoticed. That is why this class
+    exists rather than a comment.
+    """
+
+    def _plan(self):
+        constants = _make_constants()
+        agents = AgentRegistry(meta=Meta(version="0.4"), agents=[
+            _agent(name="agent_arc_x",
+                   share_class={"org": "arc", "grade": 3,
+                                "vertical": "tech", "scope": "mz"}),
+        ])
+        plan, _ = compile_plan(
+            constants, [(_make_org("arc"), Path("arc.yml"))], agents, {}, {})
+        return plan
+
+    def test_every_classification_path_ends_in_exactly_one_slash(self):
+        plan = self._plan()
+        assert plan.directory_classifications, "fixture must produce entries"
+        for dc in plan.directory_classifications:
+            assert dc.path.endswith("/"), (
+                f"'{dc.path}' has no trailing slash — 0.7 promises one shape for "
+                f"every entry, whatever its provenance"
+            )
+            assert not dc.path.endswith("//"), dc.path
+
+    def test_org_data_and_agent_surfaces_share_the_convention(self, tmp_path):
+        """The regression that mattered: the two families are built by different
+        code paths, so the convention has to hold across BOTH or it is not a
+        convention.
+
+        Uses the real fixture registry rather than the minimal helper, because
+        the helper builds an org with no data entries — and an assertion over an
+        empty list is the vacuous pass this whole class exists to prevent. The
+        preconditions below are deliberate: this test fails loudly if its own
+        input stops exercising both families.
+        """
+        from rbac_compiler import operations
+        r = operations.compile_registry(
+            registry_dir=Path(__file__).parent / "fixtures" / "valid",
+            output=tmp_path / "p.yml")
+        plan = r.plan
+        org_data = [d for d in plan.directory_classifications if d.owner == "root"]
+        surfaces = [d for d in plan.directory_classifications if d.owner != "root"]
+        assert org_data, "fixture must include org-data entries"
+        assert surfaces, "fixture must include agent-surface entries"
+        for d in org_data + surfaces:
+            assert d.path.endswith("/"), d.path
+
+    def test_private_dirs_share_it_too(self):
+        for pd in self._plan().agent_private_dirs:
+            assert pd.path.endswith("/"), pd.path
+
+    def test_no_leading_slash_anywhere(self):
+        """Paths stay relative to the root declared in meta.path_roots — a
+        leading slash would be prepended to a root and resolve nowhere.
+        """
+        plan = self._plan()
+        for p in ([d.path for d in plan.directory_classifications]
+                  + [d.path for d in plan.agent_private_dirs]):
+            assert not p.startswith("/"), p

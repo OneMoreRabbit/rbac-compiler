@@ -71,9 +71,17 @@ PRIVATE_SURFACES = ("configs",)
 PRIVATE_DIR_MODE = "0700"
 
 
-def _canonicalise(path: str) -> str:
-    """Normalise a user-supplied path: trim whitespace, collapse repeated
-    slashes, ensure a single trailing slash. No path resolution (.. is
+def canonicalise_dir_path(path: str) -> str:
+    """Normalise a directory path: trim whitespace, collapse repeated
+    slashes, ensure a single trailing slash.
+
+    Public since 0.7: EVERY path the plan emits goes through this, so
+    `directory_classifications[]` carries one shape regardless of whether the
+    entry came from an agent surface or from an operator's `orgs/<org>.yml`.
+    Before 0.7 only agent surfaces were canonicalised and org-data paths were
+    copied verbatim, so the same list held two conventions with nothing saying
+    which was which — a consumer anchoring on `memory$` matched nothing, and one
+    anchoring on `Confidential/$` would have failed the other way. No path resolution (.. is
     left alone — Pydantic-level validation rejects it earlier for data
     entries; shares overrides should be trusted/checked at validation time).
     """
@@ -137,7 +145,7 @@ def resolve_surface_path(agent: Agent, surface: str) -> str | None:
                     f"to remove. Remove the override; "
                     f"`shares.configs` remains permitted."
                 )
-            return _canonicalise(override)
+            return canonicalise_dir_path(override)
 
     if agent.share_class is None:
         return None

@@ -25,13 +25,14 @@ from .models import AccessGrant, Agent, AgentRegistry, Constants, OrgDataFile
 from .resolver import (
     CLASSIFIED_SURFACES,
     CLASSIFIED_ROOT,
+    canonicalise_dir_path,
     PRIVATE_DIR_MODE,
     PRIVATE_ROOT,
     PRIVATE_SURFACES,
     resolve_surface_path_relative,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 # ── Group name construction ───────────────────────────────────────────────────
@@ -266,7 +267,7 @@ def _classifications_from_org_data(
         org_key = org_file.org
         for entry in org_file.data:
             result.append(DirectoryClassification(
-                path=entry.path,
+                path=canonicalise_dir_path(entry.path),
                 group=group_name(org_key, entry.grade, entry.vertical, entry.scope),
                 mode="02770",
                 apply_default_acl=True,
