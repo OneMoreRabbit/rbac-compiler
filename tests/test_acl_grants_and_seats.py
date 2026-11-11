@@ -262,3 +262,77 @@ class TestValidatorSeats:
         orgs = {"arc": _make_org()}
         result = validate_agent_registry(reg, _make_constants(), orgs, Path("agent_registry.yml"))
         assert not result.ok
+
+
+# ── v0.7.2: seat local_user (hub #13002) ─────────────────────────────────────
+
+SEAT_LU = {
+    "name": "arc_gis_seat",
+    "access": [{"org": "arc", "grade": 2, "vertical": "gis", "scope": "zambia"}],
+    "local_user": {"uid": 15001, "primary_gid": 15001},
+}
+
+
+class TestSeatLocalUser:
+    def test_seat_accepts_local_user(self):
+        reg = _registry(seats=[SEAT_LU])
+        assert reg.seats[0].local_user.uid == 15001
+        assert reg.seats[0].local_user.primary_gid == 15001
+
+    def test_local_user_is_optional(self):
+        reg = _registry(seats=[{"name": "arc_gis_seat", "access": []}])
+        assert reg.seats[0].local_user is None
+
+    def test_seat_uid_must_be_in_15xxx_range(self):
+        for bad in (1000, 14999, 16000):
+            with pytest.raises(ValidationError):
+                _registry(seats=[{**SEAT_LU, "local_user": {"uid": bad, "primary_gid": 15001}}])
+
+    def test_local_user_tolerates_extra_keys_like_agents(self):
+        reg = _registry(seats=[{**SEAT_LU, "local_user": {**SEAT_LU["local_user"], "samba_enabled": True}}])
+        assert reg.seats[0].local_user.uid == 15001
+
+    def test_plan_output_unchanged_by_local_user(self):
+        org = _make_org(acl_grants=[ZAMBIA])
+        plan, _ = _compile([(org, Path("arc.yml"))], _registry(seats=[SEAT_LU]))
+        [user] = [u for u in plan.agent_users if u.name == "arc_gis_seat"]
+        assert not hasattr(user, "uid")   # uids are not emitted, same as agents
+
+
+class TestValidatorSeatUids:
+    def test_duplicate_uid_across_agents_and_seats_is_an_error(self):
+        reg = _registry(
+            agents=[{"name": "some_agent", "access": [],
+                     "local_user": {"uid": 15001, "primary_gid": 1000}}],
+            seats=[SEAT_LU],
+        )
+        orgs = {"arc": _make_org()}
+        result = validate_agent_registry(reg, _make_constants(), orgs, Path("agent_registry.yml"))
+        assert not result.ok
+        assert any("15001" in str(e) for e in result.errors)
+
+    def test_duplicate_uid_across_two_seats_is_an_error(self):
+        reg = _registry(seats=[
+            SEAT_LU,
+            {**SEAT_LU, "name": "mico_manager_seat"},
+        ])
+        orgs = {"arc": _make_org()}
+        result = validate_agent_registry(reg, _make_constants(), orgs, Path("agent_registry.yml"))
+        assert not result.ok
+
+    def test_distinct_uids_pass(self):
+        reg = _registry(seats=[
+            SEAT_LU,
+            {**SEAT_LU, "name": "mico_manager_seat",
+             "local_user": {"uid": 15002, "primary_gid": 15002}},
+        ])
+        orgs = {"arc": _make_org()}
+        result = validate_agent_registry(reg, _make_constants(), orgs, Path("agent_registry.yml"))
+        assert result.ok
+
+
+class TestVersionSingleHome:
+    def test_package_version_matches_compiler_version(self):
+        import rbac_compiler
+        from rbac_compiler import compiler
+        assert rbac_compiler.__version__ == compiler.__version__ == "0.7.2"

@@ -313,6 +313,15 @@ def validate_agent_registry(
                 result=result,
             )
 
+    # v0.10: seats share the uid namespace with agents too — one numeric
+    # identity per principal. Agents' local_user is a free-form block owned
+    # by Ansible (extra='allow'), so read the uid defensively.
+    seen_uids: dict[int, str] = {}
+    for agent in registry.agents:
+        lu = (agent.model_extra or {}).get("local_user")
+        if isinstance(lu, dict) and isinstance(lu.get("uid"), int):
+            seen_uids[lu["uid"]] = agent.name
+
     # v0.9: seats share the user namespace with agents — one principal per
     # name, whichever list it lives in.
     for seat in registry.seats:
@@ -330,6 +339,18 @@ def validate_agent_registry(
                 f"will be created with no group memberships",
                 file=path,
             )
+
+        # v0.10: duplicate numeric identity is an error, as names already are.
+        if seat.local_user is not None:
+            uid = seat.local_user.uid
+            if uid in seen_uids:
+                result.error(
+                    f"Seat '{seat.name}': uid {uid} already used by "
+                    f"'{seen_uids[uid]}' — a seat and an agent (or two seats) "
+                    f"may not share a uid",
+                    file=path,
+                )
+            seen_uids[uid] = seat.name
 
         for grant in seat.access:
             _validate_classification_tuple(

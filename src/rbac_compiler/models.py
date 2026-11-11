@@ -284,11 +284,39 @@ class Agent(BaseModel):
         return v
 
 
+SEAT_UID_MIN = 15000
+SEAT_UID_MAX = 15999
+
+
+class SeatLocalUser(BaseModel):
+    """v0.10 (compiled-rbac-plan): the identity block 07agentdata creates the
+    Linux user from — same shape as an agent's `local_user`, but typed and
+    validated here because a seat without one gets no user on beaver and the
+    apply fails closed (hub #13002). Extra keys (e.g. samba flags) are
+    tolerated like an agent's, and consumed by Ansible, not here.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    uid: int
+    primary_gid: int
+
+    @field_validator("uid")
+    @classmethod
+    def uid_in_seat_range(cls, v: int) -> int:
+        if not (SEAT_UID_MIN <= v <= SEAT_UID_MAX):
+            raise ValueError(
+                f"seat uid {v} outside the seat range "
+                f"[{SEAT_UID_MIN}, {SEAT_UID_MAX}] (agreed with estate-manage)"
+            )
+        return v
+
+
 class Seat(BaseModel):
     """v0.9 (compiled-rbac-plan): a seat principal — a Linux user plus access
-    grants, nothing else. Seats live in their own top-level `seats:` list so
-    agent tools, which treat every record under `agents:` as a target, never
-    see them (arch ruling, hub #12944). rbac-compile is the only reader.
+    grants. Seats live in their own top-level `seats:` list so agent tools,
+    which treat every record under `agents:` as a target, never see them
+    (arch ruling, hub #12944). rbac-compile is the only reader.
 
     A seat deliberately cannot carry `share_class` (extra fields are
     forbidden): a seat has no home classification, no surfaces and no private
@@ -301,6 +329,8 @@ class Seat(BaseModel):
     name: str
     description: str | None = None
     access: list[AccessGrant] = Field(default_factory=list)
+    # v0.10: optional identity block; without it 07agentdata creates no user.
+    local_user: SeatLocalUser | None = None
 
     @field_validator("name")
     @classmethod
