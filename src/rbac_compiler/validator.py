@@ -148,6 +148,43 @@ def validate_org_file(
                 file=path,
             )
 
+    # v0.9: acl_grants entries carry the same tuple vocabulary as data entries.
+    # Duplicate (path, tuple) pairs within acl_grants are errors; a path
+    # appearing in both data[] and acl_grants[] is allowed — the mechanisms
+    # are independent (classification vs added ACL).
+    seen_grants: set[tuple[str, int, str, str]] = set()
+    for grant in org_file.acl_grants:
+        key = (grant.path, grant.grade, grant.vertical, grant.scope)
+        if key in seen_grants:
+            result.error(
+                f"Duplicate acl_grants entry for path '{grant.path}' with the "
+                f"same (grade, vertical, scope) in org '{org_key}'",
+                file=path,
+            )
+        seen_grants.add(key)
+
+        if grant.grade not in org_def.grades:
+            valid = sorted(org_def.grades.keys())
+            result.error(
+                f"acl_grants path '{grant.path}': grade {grant.grade} not defined "
+                f"for org '{org_key}'. Valid grades: {valid}",
+                file=path,
+            )
+
+        if grant.vertical not in org_def.verticals:
+            result.error(
+                f"acl_grants path '{grant.path}': vertical '{grant.vertical}' not in "
+                f"org '{org_key}' verticals ({org_def.verticals})",
+                file=path,
+            )
+
+        if grant.scope not in org_def.scopes:
+            result.error(
+                f"acl_grants path '{grant.path}': scope '{grant.scope}' not in "
+                f"org '{org_key}' scopes ({org_def.scopes})",
+                file=path,
+            )
+
     return result
 
 
@@ -272,6 +309,36 @@ def validate_agent_registry(
                 scope=grant.scope,
                 known_orgs=known_orgs,
                 context=f"Agent '{agent.name}' access grant",
+                path=path,
+                result=result,
+            )
+
+    # v0.9: seats share the user namespace with agents — one principal per
+    # name, whichever list it lives in.
+    for seat in registry.seats:
+        if seat.name in seen_names:
+            result.error(
+                f"Duplicate principal name '{seat.name}' — a seat and an agent "
+                f"(or two seats) may not share a Linux username",
+                file=path,
+            )
+        seen_names.add(seat.name)
+
+        if not seat.access:
+            result.warn(
+                f"Seat '{seat.name}' has no access grants — the seat user "
+                f"will be created with no group memberships",
+                file=path,
+            )
+
+        for grant in seat.access:
+            _validate_classification_tuple(
+                org_key=grant.org,
+                grade=grant.grade,
+                vertical=grant.vertical,
+                scope=grant.scope,
+                known_orgs=known_orgs,
+                context=f"Seat '{seat.name}' access grant",
                 path=path,
                 result=result,
             )

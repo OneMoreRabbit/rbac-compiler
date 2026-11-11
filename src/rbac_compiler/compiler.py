@@ -32,7 +32,7 @@ from .resolver import (
     resolve_surface_path_relative,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 
 # ── Group name construction ───────────────────────────────────────────────────
@@ -70,6 +70,26 @@ def _used_groups_from_org_data(
     return seen
 
 
+def _used_groups_from_acl_grants(
+    org_files: list[tuple[OrgDataFile, Path]],
+) -> dict[str, UsedGroup]:
+    """v0.9: each acl_grants entry's tuple creates its share group — the group
+    joins required_groups without any classification being emitted."""
+    seen: dict[str, UsedGroup] = {}
+    for org_file, _ in org_files:
+        for entry in org_file.acl_grants:
+            name = group_name(org_file.org, entry.grade, entry.vertical, entry.scope)
+            if name not in seen:
+                seen[name] = UsedGroup(
+                    name=name,
+                    org=org_file.org,
+                    grade=entry.grade,
+                    vertical=entry.vertical,
+                    scope=entry.scope,
+                )
+    return seen
+
+
 def _used_groups_from_agents(agents: list[Agent]) -> dict[str, UsedGroup]:
     """Each agent with a share_class contributes its home group — that's the
     classification of its memory/sessions/scratch surfaces."""
@@ -95,10 +115,13 @@ def collect_used_groups(
     agents: list[Agent],
 ) -> list[UsedGroup]:
     """The unique set of (org, grade, vertical, scope) tuples that any
-    directory in the compiled plan will be classified to. Sources: org data
-    entries + agent share_class home groups.
+    directory in the compiled plan will be classified to, or that an ACL-only
+    grant names. Sources: org data entries + acl_grants tuples + agent
+    share_class home groups.
     """
     seen = _used_groups_from_org_data(org_files)
+    for name, ug in _used_groups_from_acl_grants(org_files).items():
+        seen.setdefault(name, ug)
     for name, ug in _used_groups_from_agents(agents).items():
         seen.setdefault(name, ug)
     return sorted(seen.values(), key=lambda g: g.name)
@@ -196,6 +219,22 @@ class AgentPrivateDir:
 
 
 @dataclass
+class AclGrant:
+    """v0.9: an ACL-only grant — applied downstream as an added ACL
+    (`setfacl -m`, plus `-d -m` when default_acl). Deliberately carries no
+    owner and no mode: the section cannot express an ownership or mode
+    change, by construction (seat data sharing design §4).
+    """
+
+    path: str
+    group: str
+    access: str          # "read" | "rw"
+    default_acl: bool
+    description: str | None
+    source_file: str
+
+
+@dataclass
 class CompiledPlan:
     compiled_at: str
     compiler_version: str
@@ -207,6 +246,7 @@ class CompiledPlan:
     admin_users: list[AdminUser]
     directory_classifications: list[DirectoryClassification]
     agent_private_dirs: list[AgentPrivateDir]
+    acl_grants: list[AclGrant]
     path_roots: dict[str, dict[str, str]]
     identity_parity_required: dict[str, object]
 
@@ -255,6 +295,28 @@ def _identity_parity_required(
         "users": users,
         "groups": groups,
     }
+
+
+# ── ACL-only grants (v0.9) ────────────────────────────────────────────────────
+
+def _acl_grants_from_org_data(
+    org_files: list[tuple[OrgDataFile, Path]],
+) -> list[AclGrant]:
+    """One AclGrant per acl_grants entry. The path is canonicalised like every
+    other emitted path; the group is the tuple's canonical name, which
+    collect_used_groups has already put into required_groups."""
+    result: list[AclGrant] = []
+    for org_file, path in org_files:
+        for entry in org_file.acl_grants:
+            result.append(AclGrant(
+                path=canonicalise_dir_path(entry.path),
+                group=group_name(org_file.org, entry.grade, entry.vertical, entry.scope),
+                access=entry.access,
+                default_acl=entry.default_acl,
+                description=entry.description,
+                source_file=path.name,
+            ))
+    return result
 
 
 # ── Directory classifications ─────────────────────────────────────────────────
@@ -416,6 +478,26 @@ def compile_plan(
             groups=matched,
         ))
 
+    # ── Seats (v0.9): access-only principals, same matching, no surfaces ─────
+    for seat in agent_registry.seats:
+        matched = sorted({
+            group.name
+            for grant in seat.access
+            for group in used_groups
+            if grant_matches_group(grant, group)
+        })
+        if seat.access and not matched:
+            warnings.append(
+                f"Seat '{seat.name}' matches no directory groups — "
+                "registry may be incomplete or grants miscalibrated. "
+                "Seat user will be created with no group memberships."
+            )
+        agent_users.append(AgentUser(
+            name=seat.name,
+            description=seat.description,
+            groups=matched,
+        ))
+
     # ── Admin users: membership of every required group ──────────────────────
     admin_users: list[AdminUser] = [
         AdminUser(name=name, groups=list(required_group_names))
@@ -438,6 +520,10 @@ def compile_plan(
     private_dirs.sort(key=lambda d: d.path)
     warnings.extend(private_warnings)
 
+    # ── ACL-only grants (v0.9) ────────────────────────────────────────────────
+    acl_grants = _acl_grants_from_org_data(org_files)
+    acl_grants.sort(key=lambda g: (g.path, g.group))
+
     plan = CompiledPlan(
         compiled_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         compiler_version=__version__,
@@ -449,6 +535,7 @@ def compile_plan(
         admin_users=admin_users,
         directory_classifications=dir_classifications,
         agent_private_dirs=private_dirs,
+        acl_grants=acl_grants,
         path_roots={
             "classified": {
                 "root": CLASSIFIED_ROOT,
@@ -461,6 +548,13 @@ def compile_plan(
                 "host": "beaver",
                 "applies_to": "agent_private_dirs",
                 "note": "unchanged by ADR-0010; configs/ does not move (§7)",
+            },
+            "acl": {
+                "root": PRIVATE_ROOT,
+                "host": "beaver",
+                "applies_to": "acl_grants",
+                "note": "added ACLs on beaver paths; owner/group/mode never touched "
+                        "(seat data sharing design §4)",
             },
         },
         identity_parity_required=_identity_parity_required(surface_classifications),

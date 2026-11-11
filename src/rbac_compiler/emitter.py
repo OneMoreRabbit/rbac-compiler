@@ -61,6 +61,17 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
             }
             for pd in plan.agent_private_dirs
         ],
+        "acl_grants": [
+            {
+                "path": g.path,
+                "group": g.group,
+                "access": g.access,
+                "default_acl": g.default_acl,
+                "description": g.description,
+                "source_file": g.source_file,
+            }
+            for g in plan.acl_grants
+        ],
         "identity_parity_required": plan.identity_parity_required,
     }
 

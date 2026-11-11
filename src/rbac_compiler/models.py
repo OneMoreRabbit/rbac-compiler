@@ -10,7 +10,7 @@ File roles:
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -74,6 +74,16 @@ class Constants(BaseModel):
 
 # ── orgs/<org>.yml ────────────────────────────────────────────────────────────
 
+def _relative_path_valid(v: str) -> str:
+    if not v:
+        raise ValueError("path must not be empty")
+    if ".." in v:
+        raise ValueError("path must not contain '..'")
+    if v.startswith("/"):
+        raise ValueError("path must not start with '/'")
+    return v
+
+
 class DataEntry(BaseModel):
     path: str
     grade: int
@@ -84,13 +94,7 @@ class DataEntry(BaseModel):
     @field_validator("path")
     @classmethod
     def path_valid(cls, v: str) -> str:
-        if not v:
-            raise ValueError("path must not be empty")
-        if ".." in v:
-            raise ValueError("path must not contain '..'")
-        if v.startswith("/"):
-            raise ValueError("path must not start with '/'")
-        return v
+        return _relative_path_valid(v)
 
 
 class OrgDefinition(BaseModel):
@@ -150,12 +154,36 @@ class OrgDefinition(BaseModel):
         return v
 
 
+class AclGrantEntry(BaseModel):
+    """v0.9 (compiled-rbac-plan): an ACL-only grant on a path RBAC does not
+    necessarily classify. The (grade, vertical, scope) tuple + the org file's
+    key derive the share group exactly as a data entry would — the tuple
+    creates the group, not a classification. Applied downstream as an added
+    ACL; owner, group and mode are never touched.
+    """
+
+    path: str
+    grade: int
+    vertical: str
+    scope: str
+    access: Literal["read", "rw"]
+    default_acl: bool = False
+    description: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def path_valid(cls, v: str) -> str:
+        return _relative_path_valid(v)
+
+
 class OrgDataFile(BaseModel):
     """Represents one orgs/<org>.yml file."""
 
     meta: Meta
     org_definition: OrgDefinition
     data: list[DataEntry] = Field(default_factory=list)
+    # v0.9: optional ACL-only grants (seat data sharing design §4).
+    acl_grants: list[AclGrantEntry] = Field(default_factory=list)
 
     @property
     def org(self) -> str:
@@ -256,6 +284,37 @@ class Agent(BaseModel):
         return v
 
 
+class Seat(BaseModel):
+    """v0.9 (compiled-rbac-plan): a seat principal — a Linux user plus access
+    grants, nothing else. Seats live in their own top-level `seats:` list so
+    agent tools, which treat every record under `agents:` as a target, never
+    see them (arch ruling, hub #12944). rbac-compile is the only reader.
+
+    A seat deliberately cannot carry `share_class` (extra fields are
+    forbidden): a seat has no home classification, no surfaces and no private
+    dir, and a silently-accepted share_class would emit surfaces for a
+    principal that has none — the wrong answer succeeding.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str | None = None
+    access: list[AccessGrant] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def valid_linux_username(cls, v: str) -> str:
+        if not LINUX_USERNAME_RE.match(v):
+            raise ValueError(
+                f"'{v}' is not a valid Linux username "
+                "(lowercase, alphanumeric + underscores, ≤ 32 chars, must start with a letter)"
+            )
+        return v
+
+
 class AgentRegistry(BaseModel):
     meta: Meta
     agents: list[Agent] = Field(default_factory=list)
+    # v0.9: seat principals, separate from agents on purpose (see Seat).
+    seats: list[Seat] = Field(default_factory=list)
