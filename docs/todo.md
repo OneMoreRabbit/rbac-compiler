@@ -37,10 +37,10 @@ or an operator complains they can't trace a membership.
 **Status: rbac-compile ships its own copy. Push to sync-compile pending.**
 
 The fixture at `tests/fixtures/cross_tool/agent_paths.yml` is the rbac-side
-copy of a contract that should be shared with sync-compile. Both tools'
-`resolve_surface_path()` must produce byte-identical paths for the same
-inputs (sync uses the path as bisync's `--local`; rbac uses it for a
-`directory_classification`).
+copy of a contract shared with sync-compile. Since ADR-0010 §7 the two tools
+agree on the `<org>/<name>/<surface>` shape only — not byte-identical
+absolute paths, because the classified surfaces live under the agent host's
+root while sync addresses beaver's view of them.
 
 **Action**: push this fixture to the sync-compile maintainer. Their test
 should assert their `resolve_surface_path()` matches the `absolute` column
