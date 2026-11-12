@@ -61,7 +61,8 @@ from .operations import (
 )
 from .validator import ValidationResult, validate_all
 
-__version__ = "0.7.0"
+# Single version home: compiler.__version__ (also stamped into every plan).
+from .compiler import __version__
 
 __all__ = [
     "__version__",

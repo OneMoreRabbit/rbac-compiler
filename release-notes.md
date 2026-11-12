@@ -13,6 +13,18 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.7.2 — 2026-11-11
+
+**TL;DR:** seats carry `local_user {uid, primary_gid}` so Ansible actually creates the seat's user; version string fixed.
+
+- `seats:` entries accept an optional `local_user` (same shape as an agent's, typed and validated): without it 07agentdata creates no user on beaver and the apply fails closed — found by estate-fileserver testing v0.7.1 against the live registry.
+- Seat uids are validated into the 15xxx range (agreed with estate-manage); a duplicate uid across agents and seats is an error, as names already are.
+- Plan output unchanged — uids are not emitted, same as agents.
+- `rbac-compile --version` no longer prints 0.7.0 on a newer build: one version home (`compiler.__version__`).
+- Contract: compiled-rbac-plan 0.10 (additive, registry-source text only).
+
+**Action:** estate-fileserver installs from this tag; re-pin compiled-rbac-plan 0.10.
+
 ## v0.7.1 — 2026-11-11
 
 **TL;DR:** ACL-only grants (`acl_grants`) and seat principals — folders shared into seats without touching ownership.
