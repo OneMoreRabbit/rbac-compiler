@@ -23,8 +23,11 @@ def _imported_names(path: Path):
 
 
 def test_no_other_compiler_is_imported():
+    files = sorted(SRC.rglob("*.py"))
+    # A moved src/ folder must not read as a pass while checking nothing.
+    assert files, f"no Python files found under {SRC} — guard checked nothing"
     offenders = []
-    for py in sorted(SRC.rglob("*.py")):
+    for py in files:
         for name in _imported_names(py):
             root = name.split(".")[0]
             if root in FORBIDDEN:
