@@ -180,10 +180,11 @@ class DirectoryClassification:
     apply_default_acl: bool
     description: str | None
     source_file: str
-    # v0.11: which meta.path_roots key this path is relative to — written on
-    # every entry, never inferred from owner/source_file (principle 10;
-    # agenteco-plan-path-root-ruling-v0_1).
-    path_root: str = "classified"
+    # v0.11: which meta.path_roots key this path is relative to — REQUIRED,
+    # written at every construction site, never inferred from
+    # owner/source_file and never defaulted (principle 10; arch review
+    # #13776; agenteco-plan-path-root-ruling-v0_1).
+    path_root: str
     owner: str = "root"   # v0.4: agent surfaces use the agent's Linux user
 
 
