@@ -83,3 +83,9 @@ they're visible from this project.
 
 *Append new items as they come up — keep entries short, dated, and pointed at
 the artifact (test, fixture, schema field) they affect.*
+
+## Next release-notes entry: carry one correction
+
+The v0.7.3 entry says "asked for one-dprox-per-org"; the design is **one
+dprox for every org** (arch, hub #13780). A tag is not changed; state the
+correction in the next release's entry.
