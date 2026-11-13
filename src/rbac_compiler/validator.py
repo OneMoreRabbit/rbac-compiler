@@ -59,7 +59,7 @@ def _migration_message_to_v04(detected_version: str) -> str:
         f"     orgs/top.yml (verticals: [any], scopes: [global]) and set\n"
         f"     share_class.org: top on those agents.\n"
         f"  5. Re-run rbac-compile.\n\n"
-        f"See 'RBAC Compiler Architecture v0.4.md' for the full schema."
+        f"See the vault's components/rbac-compile/docs/rbac-compile-architecture (v0.5+) for the full schema."
     )
 
 

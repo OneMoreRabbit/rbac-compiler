@@ -335,4 +335,4 @@ class TestVersionSingleHome:
     def test_package_version_matches_compiler_version(self):
         import rbac_compiler
         from rbac_compiler import compiler
-        assert rbac_compiler.__version__ == compiler.__version__ == "0.7.2"
+        assert rbac_compiler.__version__ == compiler.__version__ == "0.7.3"

@@ -16,7 +16,7 @@ Reads `classification_constants.yml`, `orgs/*.yml`, and `agent_registry.yml` fro
 ### From GitHub (recommended for production)
 
 ```bash
-pipx install git+https://github.com/jobcpf/rbac-compiler.git
+pipx install git+https://github.com/OneMoreRabbit/rbac-compiler.git
 ```
 
 This installs the `rbac-compile` command into `~/.local/bin/` (in `$PATH` by default on Ubuntu 24.04). No virtualenv management needed.
@@ -37,7 +37,7 @@ pipx ensurepath   # adds ~/.local/bin to PATH — restart shell afterwards
 ### For development (clone and edit)
 
 ```bash
-git clone https://github.com/jobcpf/rbac-compiler.git
+git clone https://github.com/OneMoreRabbit/rbac-compiler.git
 cd rbac-compiler
 python3 -m venv .venv
 source .venv/bin/activate
