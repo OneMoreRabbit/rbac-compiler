@@ -89,3 +89,11 @@ the artifact (test, fixture, schema field) they affect.*
 The v0.7.3 entry says "asked for one-dprox-per-org"; the design is **one
 dprox for every org** (arch, hub #13780). A tag is not changed; state the
 correction in the next release's entry.
+
+## Queued for compiled-rbac-plan 0.12 (next version, no release for this alone)
+
+State recursion in the acl_grants apply (arch, hub #13986): an entry is
+applied with `setfacl -R -m` plus the default rule on every folder below —
+a grant covers the files already in the folder (679 pre-existing Zambia
+Data files carry it; ingstr's classify-by-grant relies on this). Written
+so the play cannot drop `-R` without breaking a contract rule.
