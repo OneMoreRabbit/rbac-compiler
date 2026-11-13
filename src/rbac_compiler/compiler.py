@@ -32,7 +32,7 @@ from .resolver import (
     resolve_surface_path_relative,
 )
 
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 
 
 # ── Group name construction ───────────────────────────────────────────────────
@@ -180,7 +180,23 @@ class DirectoryClassification:
     apply_default_acl: bool
     description: str | None
     source_file: str
+    # v0.11: which meta.path_roots key this path is relative to — written on
+    # every entry, never inferred from owner/source_file (principle 10;
+    # agenteco-plan-path-root-ruling-v0_1).
+    path_root: str = "classified"
     owner: str = "root"   # v0.4: agent surfaces use the agent's Linux user
+
+
+@dataclass
+class GroupDecl:
+    """v0.11: a required group with its full tuple declared, so a consumer
+    reads the org (or the whole tuple) instead of parsing the name."""
+
+    name: str
+    org: str
+    grade: int
+    vertical: str
+    scope: str
 
 
 @dataclass
@@ -242,6 +258,7 @@ class CompiledPlan:
     source_files: dict[str, object]
     source_hashes: dict[str, object]
     required_groups: list[str]
+    groups: list[GroupDecl]
     agent_users: list[AgentUser]
     admin_users: list[AdminUser]
     directory_classifications: list[DirectoryClassification]
@@ -335,6 +352,7 @@ def _classifications_from_org_data(
                 apply_default_acl=True,
                 description=entry.description,
                 source_file=path.name,
+                path_root="org_data",
                 owner="root",
             ))
     return result
@@ -385,6 +403,7 @@ def _classifications_from_agent_surfaces(
                 apply_default_acl=True,
                 description=f"agent {agent.name} {surface} surface",
                 source_file=agents_source_file,
+                path_root="classified",
                 owner=agent.name,
             ))
 
@@ -451,6 +470,10 @@ def compile_plan(
     # ── Phase 3: collect used_groups from data + agent share_classes ──────────
     used_groups = collect_used_groups(org_files, agents)
     required_group_names = [g.name for g in used_groups]
+    group_decls = [
+        GroupDecl(name=g.name, org=g.org, grade=g.grade, vertical=g.vertical, scope=g.scope)
+        for g in used_groups
+    ]
 
     if not used_groups:
         warnings.append(
@@ -531,6 +554,7 @@ def compile_plan(
         source_files=source_paths,
         source_hashes=source_hashes,
         required_groups=required_group_names,
+        groups=group_decls,
         agent_users=agent_users,
         admin_users=admin_users,
         directory_classifications=dir_classifications,
@@ -548,6 +572,13 @@ def compile_plan(
                 "host": "beaver",
                 "applies_to": "agent_private_dirs",
                 "note": "unchanged by ADR-0010; configs/ does not move (§7)",
+            },
+            "org_data": {
+                "root": PRIVATE_ROOT,
+                "host": "beaver",
+                "applies_to": "directory_classifications",
+                "note": "org folders from data[]; each entry says which root with "
+                        "path_root (agenteco-plan-path-root-ruling-v0_1)",
             },
             "acl": {
                 "root": PRIVATE_ROOT,

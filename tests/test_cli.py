@@ -120,4 +120,4 @@ class TestCompileMode:
     def test_version_flag(self, runner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.7.2" in result.output
+        assert "0.7.3" in result.output

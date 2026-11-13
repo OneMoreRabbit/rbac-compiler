@@ -13,6 +13,17 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.7.3 — 2026-11-13
+
+**TL;DR:** the plan now declares each group's tuple (`groups[]`) and each classified folder's root (`path_root`) — nothing is parsed from names any more.
+
+- New `groups[]` section: {name, org, grade, vertical, scope}, one row per required group — a consumer reads the org instead of parsing the group name (asked for one-dprox-per-org and ingstr's per-org filtering).
+- Every `directory_classifications[]` entry carries `path_root: classified|org_data`, and `meta.path_roots` gains `org_data` (beaver, `/mnt/raid/`) — org folders no longer read as if they lived on the agent host ([[agenteco-plan-path-root-ruling-v0_1]]).
+- Contract also states acl_grants multiplicity (one path may carry several grants) and ordering (sorted by path, then group).
+- All additive: a reader that ignores the new keys behaves as on 0.10.
+
+**Action:** consumers re-pin compiled-rbac-plan 0.11 when they take the new fields; no playbook edit required.
+
 ## v0.7.2 — 2026-11-11
 
 **TL;DR:** seats carry `local_user {uid, primary_gid}` so Ansible actually creates the seat's user; version string fixed.

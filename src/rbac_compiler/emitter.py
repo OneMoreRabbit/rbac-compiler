@@ -26,6 +26,16 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
             "path_roots": plan.path_roots,
         },
         "required_groups": plan.required_groups,
+        "groups": [
+            {
+                "name": g.name,
+                "org": g.org,
+                "grade": g.grade,
+                "vertical": g.vertical,
+                "scope": g.scope,
+            }
+            for g in plan.groups
+        ],
         "agent_users": [
             {
                 "name": au.name,
@@ -44,6 +54,7 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
         "directory_classifications": [
             {
                 "path": dc.path,
+                "path_root": dc.path_root,
                 "owner": dc.owner,
                 "group": dc.group,
                 "mode": dc.mode,
