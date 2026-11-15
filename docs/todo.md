@@ -97,3 +97,9 @@ applied with `setfacl -R -m` plus the default rule on every folder below —
 a grant covers the files already in the folder (679 pre-existing Zambia
 Data files carry it; ingstr's classify-by-grant relies on this). Written
 so the play cannot drop `-R` without breaking a contract rule.
+
+Also for 0.12 (arch, hub #14073): state that the sync user of a two-way
+folder is declared in `seats:` with no `local_user` — a member of the share
+group like any other, so the plan keeps it (Mico Data stopped 2026-11-13
+because `rclone_job` was not in the share group). Compiles today; wording
+only.
