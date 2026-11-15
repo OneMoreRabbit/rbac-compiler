@@ -103,3 +103,11 @@ folder is declared in `seats:` with no `local_user` — a member of the share
 group like any other, so the plan keeps it (Mico Data stopped 2026-11-13
 because `rclone_job` was not in the share group). Compiles today; wording
 only.
+
+Also for 0.12 (arch + estate-manage, hub #14085): what a `seats:` entry
+with no `local_user` MEANS — it names a user that already exists on the
+host. On the fileserver the estate adds the plan's groups to it and keeps
+its existing groups; no user, credential, password or home is made; the
+apply stops if the user does not exist. On an appserver the entry is
+skipped. This REPLACES 0.11's sentence that without `local_user` the apply
+fails closed.
