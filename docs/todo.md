@@ -111,3 +111,10 @@ its existing groups; no user, credential, password or home is made; the
 apply stops if the user does not exist. On an appserver the entry is
 skipped. This REPLACES 0.11's sentence that without `local_user` the apply
 fails closed.
+
+## Queued for registry-handoff 0.7 (next version; not worth one of its own)
+
+Correct the sync-snapshot path (arch, hub #14111): the contract says
+`sync/<org>.cloud.yml`; the code writes `.compiled/<org>.cloud.yml` and
+refuses to run while a file sits at the old place (sync-compiler
+loader.py). sync-compile corrected its half in compiled-sync-plan 0.7.
