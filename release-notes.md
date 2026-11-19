@@ -13,6 +13,15 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.7.5 — 2026-11-19
+
+**TL;DR:** the no-grants seat warning counts `share_class`, as the matching code does.
+
+- A seat with `share_class` and no `access[]` no longer warns "no access grants" while the plan gives its user the class group (found by estate-manage on the first test-claude compile; `validator.py` seat check).
+- A seat's `share_class` tuple is now vocabulary-checked against its org, exactly as an agent's.
+
+**Action:** none — install from the tag as usual.
+
 ## v0.7.4 — 2026-11-19
 
 **TL;DR:** the plan declares every opted-in agent's folders as beaver sees them, and seats may carry an access class.

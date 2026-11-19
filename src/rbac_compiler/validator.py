@@ -333,11 +333,29 @@ def validate_agent_registry(
             )
         seen_names.add(seat.name)
 
-        if not seat.access:
+        # v0.7.5: count the share_class grant as the matching code does
+        # (hub #16817) — a warning that fires while the plan grants the
+        # class group is noise (constitution principle 9).
+        if not seat.access and seat.share_class is None:
             result.warn(
-                f"Seat '{seat.name}' has no access grants — the seat user "
-                f"will be created with no group memberships",
+                f"Seat '{seat.name}' has no access grants and no share_class — "
+                f"the seat user will be created with no group memberships",
                 file=path,
+            )
+
+        # v0.12: a seat's share_class joins required_groups, so its tuple is
+        # checked against the org vocabulary exactly as an agent's.
+        if seat.share_class is not None:
+            sc = seat.share_class
+            _validate_classification_tuple(
+                org_key=sc.org,
+                grade=sc.grade,
+                vertical=sc.vertical,
+                scope=sc.scope,
+                known_orgs=known_orgs,
+                context=f"Seat '{seat.name}' share_class",
+                path=path,
+                result=result,
             )
 
         # v0.10: duplicate numeric identity is an error, as names already are.
