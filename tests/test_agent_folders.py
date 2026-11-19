@@ -162,3 +162,36 @@ class TestEmitter0_12:
         out = tmp_path / "p.yml"
         emit(plan, out)
         assert YAML().load(out.read_text())["agent_folders"] == []
+
+
+class TestSeatWarning0_7_5:
+    def test_no_warning_for_seat_with_share_class_and_no_access(self):
+        # hub #16817: the warning must count the share_class grant as the
+        # matching code does.
+        from rbac_compiler.validator import validate_agent_registry
+        reg = _registry(seats=[{
+            "name": "seat_test_claude", "access": [], "share_class": SC,
+        }])
+        result = validate_agent_registry(
+            reg, _constants(), {"arc": _org()}, Path("agent_registry.yml")
+        )
+        assert not any("no access grants" in str(w) for w in result.warnings)
+
+    def test_warning_remains_for_seat_with_neither(self):
+        from rbac_compiler.validator import validate_agent_registry
+        reg = _registry(seats=[{"name": "seat_bare", "access": []}])
+        result = validate_agent_registry(
+            reg, _constants(), {"arc": _org()}, Path("agent_registry.yml")
+        )
+        assert any("seat_bare" in str(w) for w in result.warnings)
+
+    def test_seat_share_class_tuple_checked_against_orgs(self):
+        from rbac_compiler.validator import validate_agent_registry
+        reg = _registry(seats=[{
+            "name": "seat_test_claude", "access": [],
+            "share_class": {"org": "nosuch", "grade": 1, "vertical": "tech", "scope": "uk"},
+        }])
+        result = validate_agent_registry(
+            reg, _constants(), {"arc": _org()}, Path("agent_registry.yml")
+        )
+        assert not result.ok
