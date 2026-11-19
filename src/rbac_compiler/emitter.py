@@ -83,6 +83,19 @@ def _plan_to_dict(plan: CompiledPlan) -> dict[str, Any]:
             }
             for g in plan.acl_grants
         ],
+        "agent_folders": [
+            {
+                "name": f.name,
+                "kind": f.kind,
+                "host": f.host,
+                "org": f.org,
+                "folder": f.folder,
+                "path": f.path,
+                "group": f.group,
+                "indexed": f.indexed,
+            }
+            for f in plan.agent_folders
+        ],
         "identity_parity_required": plan.identity_parity_required,
     }
 

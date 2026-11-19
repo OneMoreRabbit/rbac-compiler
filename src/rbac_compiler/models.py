@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 LINUX_USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 ORG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -225,6 +225,32 @@ class Shares(BaseModel):
 SUB_AGENT_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 RESERVED_SUB_AGENT_NAMES = frozenset({"main"})
 
+# v0.12 (compiled-rbac-plan): the four agent folders, fixed by
+# agent-folders-design-v0_1 §2. `folders:` is the one opt-in to the
+# agent_folders[] plan section, on agents and seats alike.
+AGENT_FOLDER_NAMES = ("sessions", "memory", "scratch", "configs")
+HOST_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+
+
+def _validate_folders(folders: list[str]) -> list[str]:
+    seen: set[str] = set()
+    for f in folders:
+        if f not in AGENT_FOLDER_NAMES:
+            raise ValueError(
+                f"folder '{f}' is not one of the four agent folders "
+                f"({', '.join(AGENT_FOLDER_NAMES)})"
+            )
+        if f in seen:
+            raise ValueError(f"duplicate folder '{f}'")
+        seen.add(f)
+    return folders
+
+
+def _validate_host(v: str | None) -> str | None:
+    if v is not None and not HOST_NAME_RE.match(v):
+        raise ValueError(f"'{v}' is not a valid host name")
+    return v
+
 
 class Agent(BaseModel):
     # extra='allow' tolerates fields owned by other platform tools (e.g.
@@ -252,6 +278,12 @@ class Agent(BaseModel):
     # v0.4: shares is optional per-surface path overrides. When absent the
     # convention paths apply (<org>/agents/<name>/<surface>/).
     shares: Shares | None = None
+    # v0.12: a plain fact about where the record runs (sync-compile reads it
+    # as the per-agent host override; absent = the org default). It does not
+    # by itself put the record in agent_folders[].
+    host: str | None = None
+    # v0.12: the one opt-in to agent_folders[] — any subset of the four.
+    folders: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -282,6 +314,31 @@ class Agent(BaseModel):
                 raise ValueError(f"duplicate sub-agent name '{name}' within agent")
             seen.add(name)
         return v
+
+    @field_validator("folders")
+    @classmethod
+    def folders_valid(cls, v: list[str]) -> list[str]:
+        return _validate_folders(v)
+
+    @field_validator("host")
+    @classmethod
+    def host_valid(cls, v: str | None) -> str | None:
+        return _validate_host(v)
+
+    @model_validator(mode="after")
+    def folders_need_host_and_share_class(self) -> "Agent":
+        if self.folders:
+            if self.host is None:
+                raise ValueError(
+                    f"agent '{self.name}' declares folders: but no host: — "
+                    "the plan cannot say where they are"
+                )
+            if self.share_class is None:
+                raise ValueError(
+                    f"agent '{self.name}' declares folders: but no share_class — "
+                    "the plan cannot say which group classifies them"
+                )
+        return self
 
 
 SEAT_UID_MIN = 15000
@@ -318,10 +375,10 @@ class Seat(BaseModel):
     which treat every record under `agents:` as a target, never see them
     (arch ruling, hub #12944). rbac-compile is the only reader.
 
-    A seat deliberately cannot carry `share_class` (extra fields are
-    forbidden): a seat has no home classification, no surfaces and no private
-    dir, and a silently-accepted share_class would emit surfaces for a
-    principal that has none — the wrong answer succeeding.
+    Since 0.12 a seat MAY carry `share_class` — but it still gets no
+    surfaces, no classifications and no private dir: the class only names
+    the group for its user and its declared folders. Unknown fields stay
+    forbidden.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -329,8 +386,39 @@ class Seat(BaseModel):
     name: str
     description: str | None = None
     access: list[AccessGrant] = Field(default_factory=list)
-    # v0.10: optional identity block; without it 07agentdata creates no user.
+    # v0.10: optional identity block. A seat entry with no local_user names
+    # a user that already exists on the host (contract 0.12).
     local_user: SeatLocalUser | None = None
+    # v0.12: a seat MAY carry an access class. It still emits no surfaces,
+    # no classifications and no private dir; its user joins the class's
+    # group as an agent's would, and the group joins required_groups.
+    share_class: ShareClass | None = None
+    # v0.12: as on Agent — a plain fact, and the one opt-in.
+    host: str | None = None
+    folders: list[str] = Field(default_factory=list)
+
+    @field_validator("folders")
+    @classmethod
+    def folders_valid(cls, v: list[str]) -> list[str]:
+        return _validate_folders(v)
+
+    @field_validator("host")
+    @classmethod
+    def host_valid(cls, v: str | None) -> str | None:
+        return _validate_host(v)
+
+    @model_validator(mode="after")
+    def folders_need_host_and_share_class(self) -> "Seat":
+        if self.folders:
+            if self.host is None:
+                raise ValueError(
+                    f"seat '{self.name}' declares folders: but no host:"
+                )
+            if self.share_class is None:
+                raise ValueError(
+                    f"seat '{self.name}' declares folders: but no share_class"
+                )
+        return self
 
     @field_validator("name")
     @classmethod

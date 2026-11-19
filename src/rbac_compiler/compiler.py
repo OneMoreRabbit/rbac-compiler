@@ -32,7 +32,7 @@ from .resolver import (
     resolve_surface_path_relative,
 )
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 
 
 # ── Group name construction ───────────────────────────────────────────────────
@@ -110,9 +110,27 @@ def _used_groups_from_agents(agents: list[Agent]) -> dict[str, UsedGroup]:
     return seen
 
 
+def _used_groups_from_seats(seats) -> dict[str, UsedGroup]:
+    """v0.12: a seat's share_class contributes its group — the class only
+    names the group; no surfaces follow from it."""
+    seen: dict[str, UsedGroup] = {}
+    for seat in seats:
+        if seat.share_class is None:
+            continue
+        sc = seat.share_class
+        name = group_name(sc.org, sc.grade, sc.vertical, sc.scope)
+        if name not in seen:
+            seen[name] = UsedGroup(
+                name=name, org=sc.org, grade=sc.grade,
+                vertical=sc.vertical, scope=sc.scope,
+            )
+    return seen
+
+
 def collect_used_groups(
     org_files: list[tuple[OrgDataFile, Path]],
     agents: list[Agent],
+    seats=(),
 ) -> list[UsedGroup]:
     """The unique set of (org, grade, vertical, scope) tuples that any
     directory in the compiled plan will be classified to, or that an ACL-only
@@ -123,6 +141,8 @@ def collect_used_groups(
     for name, ug in _used_groups_from_acl_grants(org_files).items():
         seen.setdefault(name, ug)
     for name, ug in _used_groups_from_agents(agents).items():
+        seen.setdefault(name, ug)
+    for name, ug in _used_groups_from_seats(seats).items():
         seen.setdefault(name, ug)
     return sorted(seen.values(), key=lambda g: g.name)
 
@@ -252,6 +272,23 @@ class AclGrant:
 
 
 @dataclass
+class AgentFolder:
+    """v0.12: one declared agent folder as beaver sees it — a declaration
+    only. Ansible changes no owner, group, mode or access rule from it;
+    the consumers are search (classify by `group`) and backup.
+    """
+
+    name: str
+    kind: str        # "agent" | "seat"
+    host: str
+    org: str
+    folder: str
+    path: str        # <host>/<org>/<name>/<folder>/, relative to agent_hosts
+    group: str
+    indexed: bool    # false only for configs
+
+
+@dataclass
 class CompiledPlan:
     compiled_at: str
     compiler_version: str
@@ -265,6 +302,7 @@ class CompiledPlan:
     directory_classifications: list[DirectoryClassification]
     agent_private_dirs: list[AgentPrivateDir]
     acl_grants: list[AclGrant]
+    agent_folders: list[AgentFolder]
     path_roots: dict[str, dict[str, str]]
     identity_parity_required: dict[str, object]
 
@@ -447,6 +485,34 @@ def _private_dirs_from_agents(
     return private_dirs, warnings
 
 
+# ── Agent folders (v0.12) ─────────────────────────────────────────────────────
+
+def _agent_folders(agents: list[Agent], seats) -> list[AgentFolder]:
+    """One row per declared folder, for records that opted in with
+    `folders:`. Model validation guarantees host and share_class are
+    present whenever folders is non-empty."""
+    rows: list[AgentFolder] = []
+    for kind, records in (("agent", agents), ("seat", seats)):
+        for rec in records:
+            if not rec.folders:
+                continue
+            sc = rec.share_class
+            grp = group_name(sc.org, sc.grade, sc.vertical, sc.scope)
+            for folder in sorted(rec.folders):
+                rows.append(AgentFolder(
+                    name=rec.name,
+                    kind=kind,
+                    host=rec.host,
+                    org=sc.org,
+                    folder=folder,
+                    path=f"{rec.host}/{sc.org}/{rec.name}/{folder}/",
+                    group=grp,
+                    indexed=folder != "configs",
+                ))
+    rows.sort(key=lambda r: r.path)
+    return rows
+
+
 # ── Main compilation entry point ──────────────────────────────────────────────
 
 def compile_plan(
@@ -469,7 +535,7 @@ def compile_plan(
     agents = agent_registry.agents
 
     # ── Phase 3: collect used_groups from data + agent share_classes ──────────
-    used_groups = collect_used_groups(org_files, agents)
+    used_groups = collect_used_groups(org_files, agents, agent_registry.seats)
     required_group_names = [g.name for g in used_groups]
     group_decls = [
         GroupDecl(name=g.name, org=g.org, grade=g.grade, vertical=g.vertical, scope=g.scope)
@@ -504,13 +570,19 @@ def compile_plan(
 
     # ── Seats (v0.9): access-only principals, same matching, no surfaces ─────
     for seat in agent_registry.seats:
+        seat_grants = list(seat.access)
+        if seat.share_class is not None:
+            sc = seat.share_class
+            seat_grants.append(AccessGrant(
+                org=sc.org, grade=sc.grade, vertical=sc.vertical, scope=sc.scope
+            ))
         matched = sorted({
             group.name
-            for grant in seat.access
+            for grant in seat_grants
             for group in used_groups
             if grant_matches_group(grant, group)
         })
-        if seat.access and not matched:
+        if seat_grants and not matched:
             warnings.append(
                 f"Seat '{seat.name}' matches no directory groups — "
                 "registry may be incomplete or grants miscalibrated. "
@@ -548,6 +620,9 @@ def compile_plan(
     acl_grants = _acl_grants_from_org_data(org_files)
     acl_grants.sort(key=lambda g: (g.path, g.group))
 
+    # ── Agent folders (v0.12) ─────────────────────────────────────────────────
+    agent_folders = _agent_folders(agents, agent_registry.seats)
+
     plan = CompiledPlan(
         compiled_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         compiler_version=__version__,
@@ -561,6 +636,7 @@ def compile_plan(
         directory_classifications=dir_classifications,
         agent_private_dirs=private_dirs,
         acl_grants=acl_grants,
+        agent_folders=agent_folders,
         path_roots={
             "classified": {
                 "root": CLASSIFIED_ROOT,
@@ -580,6 +656,13 @@ def compile_plan(
                 "applies_to": "directory_classifications",
                 "note": "org folders from data[]; each entry says which root with "
                         "path_root (agenteco-plan-path-root-ruling-v0_1)",
+            },
+            "agent_hosts": {
+                "root": "/mnt/agent-hosts/",
+                "host": "beaver",
+                "applies_to": "agent_folders",
+                "note": "beaver's read-only view of each host's /srv/agents "
+                        "(agent-folders-design-v0_1 §3); a declaration only",
             },
             "acl": {
                 "root": PRIVATE_ROOT,

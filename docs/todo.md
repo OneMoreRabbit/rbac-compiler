@@ -83,38 +83,3 @@ they're visible from this project.
 
 *Append new items as they come up — keep entries short, dated, and pointed at
 the artifact (test, fixture, schema field) they affect.*
-
-## Next release-notes entry: carry one correction
-
-The v0.7.3 entry says "asked for one-dprox-per-org"; the design is **one
-dprox for every org** (arch, hub #13780). A tag is not changed; state the
-correction in the next release's entry.
-
-## Queued for compiled-rbac-plan 0.12 (next version, no release for this alone)
-
-State recursion in the acl_grants apply (arch, hub #13986): an entry is
-applied with `setfacl -R -m` plus the default rule on every folder below —
-a grant covers the files already in the folder (679 pre-existing Zambia
-Data files carry it; ingstr's classify-by-grant relies on this). Written
-so the play cannot drop `-R` without breaking a contract rule.
-
-Also for 0.12 (arch, hub #14073): state that the sync user of a two-way
-folder is declared in `seats:` with no `local_user` — a member of the share
-group like any other, so the plan keeps it (Mico Data stopped 2026-11-13
-because `rclone_job` was not in the share group). Compiles today; wording
-only.
-
-Also for 0.12 (arch + estate-manage, hub #14085): what a `seats:` entry
-with no `local_user` MEANS — it names a user that already exists on the
-host. On the fileserver the estate adds the plan's groups to it and keeps
-its existing groups; no user, credential, password or home is made; the
-apply stops if the user does not exist. On an appserver the entry is
-skipped. This REPLACES 0.11's sentence that without `local_user` the apply
-fails closed.
-
-## Queued for registry-handoff 0.7 (next version; not worth one of its own)
-
-Correct the sync-snapshot path (arch, hub #14111): the contract says
-`sync/<org>.cloud.yml`; the code writes `.compiled/<org>.cloud.yml` and
-refuses to run while a file sits at the old place (sync-compiler
-loader.py). sync-compile corrected its half in compiled-sync-plan 0.7.
