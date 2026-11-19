@@ -109,14 +109,14 @@ class TestSeatModel:
         assert reg.seats[0].name == "arc_gis_seat"
         assert len(reg.seats[0].access) == 1
 
-    def test_seat_rejects_share_class(self):
-        # A seat has no home classification — the wrong answer would succeed
-        # silently (surfaces emitted for a principal that has none).
+    def test_seat_rejects_unknown_fields(self):
+        # 0.12 allows share_class on a seat (still no surfaces — asserted in
+        # test_agent_folders.py); unknown fields stay forbidden.
         with pytest.raises(ValidationError):
             _registry(seats=[{
                 "name": "arc_gis_seat",
                 "access": [],
-                "share_class": {"org": "arc", "grade": 2, "vertical": "gis", "scope": "zambia"},
+                "sub_agents": ["x"],
             }])
 
     def test_seat_name_is_a_linux_username(self):
@@ -335,4 +335,4 @@ class TestVersionSingleHome:
     def test_package_version_matches_compiler_version(self):
         import rbac_compiler
         from rbac_compiler import compiler
-        assert rbac_compiler.__version__ == compiler.__version__ == "0.7.3"
+        assert rbac_compiler.__version__ == compiler.__version__ == "0.7.4"

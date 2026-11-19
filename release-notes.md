@@ -13,6 +13,18 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.7.4 — 2026-11-19
+
+**TL;DR:** the plan declares every opted-in agent's folders as beaver sees them, and seats may carry an access class.
+
+- New `agent_folders[]` section: {name, kind agent|seat, host, org, folder, path, group, indexed} with the `agent_hosts` path root (`/mnt/agent-hosts/`, beaver). **A declaration only** — Ansible changes no owner, group, mode or access rule from it; consumers are search and backup ([[agent-folders-design-v0_1]]).
+- `folders:` is the one opt-in, on agents and seats alike (any subset of sessions/memory/scratch/configs); `host:` is a plain fact sync-compile reads as the per-agent override. folders without host or share_class is a validation error. `indexed` is false only for configs.
+- Seats may carry `share_class` — the user joins the class's group; still no surfaces, classifications or private dir.
+- Contract: compiled-rbac-plan 0.12 and registry-handoff 0.7 (host: readable by sync-compile — answers their host-field need; snapshot path corrected).
+- Correction to the v0.7.3 entry: the groups[] consumer is **one dprox for every org**, not one-dprox-per-org.
+
+**Action:** ingstr and estate-manage pin compiled-rbac-plan 0.12 to read `agent_folders[]`; sync-compile pins registry-handoff 0.7 for `host:`. Nothing applied on beaver until the estate's word.
+
 ## v0.7.3 — 2026-11-13
 
 **TL;DR:** the plan now declares each group's tuple (`groups[]`) and each classified folder's root (`path_root`) — nothing is parsed from names any more.
